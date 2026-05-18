@@ -1,5 +1,11 @@
 # Smart Grid Dashboard
 
+# Requirements
+
+- Python 3.10+
+- Node 22+
+- npm
+
 ## Setup
 
 ```bash
