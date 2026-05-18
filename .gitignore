@@ -1,0 +1,15 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+*.pyc
+
+# Database
+backend/smartgrid.db
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# OS / editor
+.DS_Store
+.vscode/
