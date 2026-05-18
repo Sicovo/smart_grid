@@ -15,13 +15,28 @@ const API_BASE = "http://localhost:8000";
 function App() {
   const [latest, setLatest] = useState(null);
   const [snapshots, setSnapshots] = useState([]);
+  const [smpsLatest, setSmpsLatest] = useState(null);
+  const [smpsSnapshots, setSmpsSnapshots] = useState([]);
 
   async function fetchData() {
-    const latestRes = await fetch(`${API_BASE}/latest`);
-    const snapshotsRes = await fetch(`${API_BASE}/snapshots?limit=50`);
+    const [latestRes, snapshotsRes, smpsLatestRes, smpsSnapshotsRes] = await Promise.all([
+      fetch(`${API_BASE}/latest`),
+      fetch(`${API_BASE}/snapshots?limit=50`),
+      fetch(`${API_BASE}/smps/latest`),
+      fetch(`${API_BASE}/smps/snapshots?limit=120`),
+    ]);
 
-    setLatest(await latestRes.json());
-    setSnapshots(await snapshotsRes.json());
+    const [latestData, snapshotsData, smpsLatestData, smpsSnapshotsData] = await Promise.all([
+      latestRes.json(),
+      snapshotsRes.json(),
+      smpsLatestRes.json(),
+      smpsSnapshotsRes.json(),
+    ]);
+
+    setLatest(latestData?.error ? null : latestData);
+    setSnapshots(Array.isArray(snapshotsData) ? snapshotsData : []);
+    setSmpsLatest(smpsLatestData?.error ? null : smpsLatestData);
+    setSmpsSnapshots(Array.isArray(smpsSnapshotsData) ? smpsSnapshotsData : []);
   }
 
   useEffect(() => {
@@ -30,10 +45,6 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  if (!latest) {
-    return <div className="page">Loading...</div>;
-  }
-
   return (
     <div className="page">
       <header className="header">
@@ -41,22 +52,37 @@ function App() {
           <h1>Smart Grid Dashboard</h1>
           <p>Live energy demand, solar input and grid pricing</p>
         </div>
-        <div className="status">Tick {latest.tick}</div>
+        <div className="status">Tick {latest?.tick ?? "-"}</div>
       </header>
 
       <section className="hero">
         <div>
           <p className="label">Current Demand</p>
-          <h2>{latest.instant_demand.toFixed(2)} W</h2>
+          <h2>{typeof latest?.instant_demand === "number" ? `${latest.instant_demand.toFixed(2)} W` : "-"}</h2>
           <p>Live domestic emulator load</p>
         </div>
       </section>
 
       <section className="cards">
-        <StatCard title="Sun" value={`${latest.sun.toFixed(0)}%`} />
-        <StatCard title="Buy Price" value={`${latest.buy_price.toFixed(0)}`} />
-        <StatCard title="Sell Price" value={`${latest.sell_price.toFixed(0)}`} />
+        <StatCard title="Sun" value={typeof latest?.sun === "number" ? `${latest.sun.toFixed(0)}%` : "-"} />
+        <StatCard title="Buy Price" value={typeof latest?.buy_price === "number" ? `${latest.buy_price.toFixed(0)}` : "-"} />
+        <StatCard title="Sell Price" value={typeof latest?.sell_price === "number" ? `${latest.sell_price.toFixed(0)}` : "-"} />
         <StatCard title="Data Points" value={snapshots.length} />
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h3>SMPS Live</h3>
+          <p>{smpsLatest ? "Latest serial sample" : "Waiting for SMPS serial data"}</p>
+        </div>
+        <div className="cards cards-tight">
+          <StatCard title="Va" value={formatSmps(smpsLatest?.va)} />
+          <StatCard title="Vb" value={formatSmps(smpsLatest?.vb)} />
+          <StatCard title="Vpot" value={formatSmps(smpsLatest?.vpot)} />
+          <StatCard title="iL" value={formatSmps(smpsLatest?.iL)} />
+          <StatCard title="Duty" value={formatInt(smpsLatest?.duty)} />
+          <StatCard title="CL / BU / OC" value={formatFlags(smpsLatest)} />
+        </div>
       </section>
 
       <section className="panel">
@@ -80,8 +106,51 @@ function App() {
           </ResponsiveContainer>
         </div>
       </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h3>SMPS History</h3>
+          <p>Last 120 SMPS samples from backend</p>
+        </div>
+
+        <div className="chart">
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={smpsSnapshots}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="id" />
+              <YAxis />
+              <Tooltip />
+              <Line type="monotone" dataKey="va" name="Va" strokeWidth={3} dot={false} />
+              <Line type="monotone" dataKey="vb" name="Vb" strokeWidth={3} dot={false} />
+              <Line type="monotone" dataKey="iL" name="iL" strokeWidth={3} dot={false} />
+              <Line type="monotone" dataKey="i_ref" name="i_ref" strokeWidth={3} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
     </div>
   );
+}
+
+function formatSmps(value) {
+  if (typeof value !== "number") {
+    return "-";
+  }
+  return value.toFixed(3);
+}
+
+function formatInt(value) {
+  if (typeof value !== "number") {
+    return "-";
+  }
+  return String(Math.round(value));
+}
+
+function formatFlags(sample) {
+  if (!sample) {
+    return "-";
+  }
+  return `${sample.CL ?? "-"}/${sample.BU ?? "-"}/${sample.OC ?? "-"}`;
 }
 
 function StatCard({ title, value }) {
