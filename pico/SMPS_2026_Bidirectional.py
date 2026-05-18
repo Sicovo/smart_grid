@@ -1,4 +1,30 @@
+import network
+import urequests
+import json
 from machine import Pin, I2C, ADC, PWM, Timer
+
+# ── WiFi / backend settings ──────────────────────────────────────────────────
+WIFI_SSID     = "Dzuldiniy"
+WIFI_PASSWORD = "YOUR_PASSWORD"
+BACKEND_URL   = "http://YOUR_BACKEND_IP:8000/smps/ingest"
+# ─────────────────────────────────────────────────────────────────────────────
+
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    if not wlan.isconnected():
+        print("Connecting to WiFi...")
+        wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+        timeout = 15
+        while not wlan.isconnected() and timeout > 0:
+            import time
+            time.sleep(1)
+            timeout -= 1
+    if wlan.isconnected():
+        print("WiFi connected:", wlan.ifconfig()[0])
+    else:
+        print("WiFi connection failed — continuing without network")
+    return wlan
 
 # Set up some pin allocations for the Analogues and switches
 va_pin = ADC(Pin(28))
@@ -79,7 +105,16 @@ def dashboard_json(data):
 
 
 def send_json(data):
-    print(dashboard_json(data))
+    try:
+        body = dashboard_json(data)
+        r = urequests.post(
+            BACKEND_URL,
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        r.close()
+    except Exception as e:
+        print("HTTP POST failed:", e)
 
 # saturation function for anything you want saturated within bounds
 def saturate(signal, upper, lower): 
@@ -135,6 +170,8 @@ class ina219:
 
 
 # Here we go, main function, always executes
+connect_wifi()
+
 while True:
     if first_run:
         # for first run, set up the INA link and the loop timer settings

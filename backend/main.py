@@ -151,6 +151,16 @@ def get_smps_snapshots(limit: int = 120):
     ]
 
 
+@app.post("/smps/ingest")
+async def ingest_smps(payload: dict):
+    try:
+        save_smps_snapshot(payload)
+    except (KeyError, TypeError) as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"ok": True}
+
+
 @app.get("/smps/latest")
 def get_smps_latest():
     db = SessionLocal()
