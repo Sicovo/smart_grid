@@ -4,9 +4,9 @@ import json
 from machine import Pin, I2C, ADC, PWM, Timer
 
 # ── WiFi / backend settings ──────────────────────────────────────────────────
-WIFI_SSID     = "Dzuldiniy"
-WIFI_PASSWORD = "YOUR_PASSWORD"
-BACKEND_URL   = "http://YOUR_BACKEND_IP:8000/smps/ingest"
+WIFI_SSID     = "Sicovo"
+WIFI_PASSWORD = "12345688"
+BACKEND_URL   = "http://localhost:5173/smps/ingest"
 # ─────────────────────────────────────────────────────────────────────────────
 
 def connect_wifi():
