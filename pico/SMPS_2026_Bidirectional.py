@@ -1,15 +1,20 @@
 import network
 import urequests
 import json
+import time
 from machine import Pin, I2C, ADC, PWM, Timer
 
 # ── WiFi / backend settings ──────────────────────────────────────────────────
 WIFI_SSID     = "Sicovo"
 WIFI_PASSWORD = "12345688"
-BACKEND_URL   = "http://localhost:5173/smps/ingest"
+# Update BACKEND_URL to the backend server's IP address
+BACKEND_URL   = "http://172.20.10.2:8000/smps/ingest"
 # ─────────────────────────────────────────────────────────────────────────────
 
+wlan = None
+
 def connect_wifi():
+    global wlan
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     if not wlan.isconnected():
@@ -105,16 +110,26 @@ def dashboard_json(data):
 
 
 def send_json(data):
-    try:
-        body = dashboard_json(data)
-        r = urequests.post(
-            BACKEND_URL,
-            data=body,
-            headers={"Content-Type": "application/json"},
-        )
-        r.close()
-    except Exception as e:
-        print("HTTP POST failed:", e)
+    global wlan
+    body = dashboard_json(data)
+    for attempt in range(3):  # Increase retry attempts to 3
+        try:
+            if wlan is None or not wlan.isconnected():
+                wlan = connect_wifi()
+            if wlan is None or not wlan.isconnected():
+                print("HTTP POST skipped: WiFi not connected")
+                return
+
+            r = urequests.post(
+                BACKEND_URL,
+                data=body,
+                headers={"Content-Type": "application/json"},
+            )
+            r.close()
+            return
+        except Exception as e:
+            print("HTTP POST failed:", e)
+            return
 
 # saturation function for anything you want saturated within bounds
 def saturate(signal, upper, lower): 
