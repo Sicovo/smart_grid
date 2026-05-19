@@ -52,7 +52,7 @@ def start_smps_serial_ingest():
 
 @app.on_event("startup")
 def startup_event():
-    init_db()
+    init_db(reset=True)
     start_smps_serial_ingest()
 
 app.add_middleware(

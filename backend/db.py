@@ -39,7 +39,9 @@ class SMPSnapshot(Base):
     i_err = Column(Float)
     i_ref = Column(Float)
 
-def init_db():
+def init_db(reset=False):
+    if reset:
+        Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
 def save_snapshot(state):

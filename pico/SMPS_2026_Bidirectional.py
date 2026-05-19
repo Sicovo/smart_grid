@@ -2,21 +2,284 @@ import network
 import urequests
 import json
 import time
+import socket
 from machine import Pin, I2C, ADC, PWM, Timer
 
 # ── WiFi / backend settings ──────────────────────────────────────────────────
-WIFI_SSID     = "Sicovo"
-WIFI_PASSWORD = "12345688"
-# Update BACKEND_URL to the backend server's IP address
-BACKEND_URL   = "http://172.20.10.2:8000/smps/ingest"
+WIFI_SSID = ""
+WIFI_PASSWORD = ""
+BACKEND_HOST = ""
+BACKEND_URL = ""
+
+CONFIG_FILE = "smps_net_config.json"
+AP_SSID = "SMPS-Setup"
+AP_PASSWORD = "smpssetup123"
+AP_IP = "192.168.4.1"
 # ─────────────────────────────────────────────────────────────────────────────
 
 wlan = None
+
+
+def urldecode(value):
+    value = value.replace("+", " ")
+    parts = value.split("%")
+    if len(parts) == 1:
+        return value
+    out = parts[0]
+    for part in parts[1:]:
+        if len(part) >= 2:
+            try:
+                out += chr(int(part[:2], 16)) + part[2:]
+            except ValueError:
+                out += "%" + part
+        else:
+            out += "%" + part
+    return out
+
+
+def parse_form_encoded(body):
+    parsed = {}
+    if not body:
+        return parsed
+    for pair in body.split("&"):
+        if "=" in pair:
+            key, value = pair.split("=", 1)
+            parsed[urldecode(key)] = urldecode(value)
+    return parsed
+
+
+def normalize_backend_host(host):
+    host = host.strip()
+    if host.startswith("http://"):
+        host = host[7:]
+    elif host.startswith("https://"):
+        host = host[8:]
+    host = host.strip("/")
+    if "/" in host:
+        host = host.split("/", 1)[0]
+    return host
+
+
+def build_backend_url(host):
+    host = normalize_backend_host(host)
+    if not host:
+        return ""
+    if ":" in host:
+        return "http://{}/smps/ingest".format(host)
+    return "http://{}:8000/smps/ingest".format(host)
+
+
+def load_config():
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            cfg = json.loads(f.read())
+            return {
+                "wifi_ssid": cfg.get("wifi_ssid", ""),
+                "wifi_password": cfg.get("wifi_password", ""),
+                "backend_host": normalize_backend_host(cfg.get("backend_host", "")),
+            }
+    except Exception:
+        return {"wifi_ssid": "", "wifi_password": "", "backend_host": ""}
+
+
+def save_config(cfg):
+    with open(CONFIG_FILE, "w") as f:
+        f.write(json.dumps(cfg))
+
+
+def apply_network_config(cfg):
+    global WIFI_SSID, WIFI_PASSWORD, BACKEND_HOST, BACKEND_URL
+    WIFI_SSID = cfg.get("wifi_ssid", "").strip()
+    WIFI_PASSWORD = cfg.get("wifi_password", "")
+    BACKEND_HOST = normalize_backend_host(cfg.get("backend_host", ""))
+    BACKEND_URL = build_backend_url(BACKEND_HOST)
+
+
+def start_access_point():
+    ap = network.WLAN(network.AP_IF)
+    ap.active(True)
+    ap.ifconfig((AP_IP, "255.255.255.0", AP_IP, AP_IP))
+    if AP_PASSWORD:
+        # Some MicroPython builds don't expose AUTH_WPA_WPA2_PSK.
+        ap.config(essid=AP_SSID, password=AP_PASSWORD)
+    else:
+        ap.config(essid=AP_SSID)
+    print("AP active: {} on {}".format(AP_SSID, AP_IP))
+    return ap
+
+
+def stop_access_point(ap):
+    try:
+        ap.active(False)
+    except Exception:
+        pass
+
+
+def setup_page_html(cfg, status):
+    ssid = cfg.get("wifi_ssid", "")
+    wifi_password = cfg.get("wifi_password", "")
+    backend = cfg.get("backend_host", "")
+    return """HTTP/1.1 200 OK\r
+Content-Type: text/html\r
+Connection: close\r
+\r
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+  <title>SMPS Setup</title>
+  <style>
+        body {{ font-family: Arial, sans-serif; max-width: 520px; margin: 24px auto; padding: 0 12px; }}
+        input {{ width: 100%; padding: 10px; margin: 6px 0 12px 0; box-sizing: border-box; }}
+        button {{ padding: 10px 14px; }}
+        .ok {{ color: #0a5; }}
+        .warn {{ color: #a50; }}
+  </style>
+</head>
+<body>
+  <h2>SMPS Network Setup</h2>
+  <p>Connect Pico to your Wi-Fi and backend.</p>
+    <p class="warn">{status}</p>
+  <form method=\"POST\" action=\"/\">
+    <label>Wi-Fi SSID</label>
+    <input name=\"wifi_ssid\" value=\"{ssid}\" required>
+
+    <label>Wi-Fi Password</label>
+        <input type="password" name="wifi_password" value="{wifi_password}" required>
+
+    <label>Backend IP (or host:port)</label>
+    <input name=\"backend_host\" value=\"{backend}\" placeholder=\"192.168.1.42\" required>
+
+    <button type=\"submit\">Save and Connect</button>
+  </form>
+</body>
+</html>
+""".format(status=status, ssid=ssid, wifi_password=wifi_password, backend=backend)
+
+
+def setup_success_html(url):
+    return """HTTP/1.1 200 OK\r
+Content-Type: text/html\r
+Connection: close\r
+\r
+<!DOCTYPE html>
+<html>
+<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>
+<body style=\"font-family: Arial, sans-serif; max-width: 520px; margin: 24px auto;\">
+  <h2>Saved</h2>
+  <p>Configuration saved. Pico is now connecting to Wi-Fi.</p>
+  <p>Backend URL: <strong>{}</strong></p>
+  <p>You can close this page.</p>
+</body>
+</html>
+""".format(url)
+
+
+def run_setup_portal():
+    stored = load_config()
+    ap = start_access_point()
+    addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(addr)
+    s.listen(1)
+    s.settimeout(1)
+
+    status = "Submit Wi-Fi SSID, Wi-Fi password, and backend IP."
+
+    try:
+        while True:
+            try:
+                cl, _ = s.accept()
+            except OSError:
+                continue
+
+            try:
+                cl.settimeout(2)
+
+                req = b""
+                while b"\r\n\r\n" not in req and len(req) < 4096:
+                    chunk = cl.recv(512)
+                    if not chunk:
+                        break
+                    req += chunk
+
+                if not req:
+                    continue
+
+                header_end = req.find(b"\r\n\r\n")
+                if header_end < 0:
+                    header = req.decode("utf-8", "ignore")
+                    body = ""
+                else:
+                    header_bytes = req[:header_end]
+                    body_bytes = req[header_end + 4:]
+                    header = header_bytes.decode("utf-8", "ignore")
+
+                    content_length = 0
+                    for line in header.split("\r\n"):
+                        lower = line.lower()
+                        if lower.startswith("content-length:"):
+                            try:
+                                content_length = int(line.split(":", 1)[1].strip())
+                            except Exception:
+                                content_length = 0
+                            break
+
+                    while len(body_bytes) < content_length:
+                        chunk = cl.recv(min(512, content_length - len(body_bytes)))
+                        if not chunk:
+                            break
+                        body_bytes += chunk
+
+                    body = body_bytes.decode("utf-8", "ignore")
+
+                req_line = header.split("\r\n", 1)[0] if header else ""
+                method = "GET"
+                if req_line:
+                    method = req_line.split(" ", 1)[0]
+
+                if method == "POST":
+                    form = parse_form_encoded(body)
+                    cfg = {
+                        "wifi_ssid": form.get("wifi_ssid", "").strip(),
+                        "wifi_password": form.get("wifi_password", ""),
+                        "backend_host": normalize_backend_host(form.get("backend_host", "")),
+                    }
+                    stored = cfg
+
+                    if cfg["wifi_ssid"] and cfg["wifi_password"] and cfg["backend_host"]:
+                        save_config(cfg)
+                        url = build_backend_url(cfg["backend_host"])
+                        cl.send(setup_success_html(url).encode("utf-8"))
+                        print("Setup saved; leaving AP mode")
+                        return cfg
+
+                    status = "All fields are required: SSID, password, and backend IP."
+
+                cl.send(setup_page_html(stored, status).encode("utf-8"))
+            except Exception as exc:
+                print("Setup portal error:", exc)
+            finally:
+                try:
+                    cl.close()
+                except Exception:
+                    pass
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+        stop_access_point(ap)
 
 def connect_wifi():
     global wlan
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+    if not WIFI_SSID:
+        print("No WiFi SSID configured")
+        return wlan
     if not wlan.isconnected():
         print("Connecting to WiFi...")
         wlan.connect(WIFI_SSID, WIFI_PASSWORD)
@@ -185,6 +448,9 @@ class ina219:
 
 
 # Here we go, main function, always executes
+cfg = run_setup_portal()
+apply_network_config(cfg)
+print("Using backend:", BACKEND_URL)
 connect_wifi()
 
 while True:
