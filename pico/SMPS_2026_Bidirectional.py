@@ -1,30 +1,78 @@
 import network
-import urequests
 import json
+import socket
+import time
 from machine import Pin, I2C, ADC, PWM, Timer
 
-# ── WiFi / backend settings ──────────────────────────────────────────────────
-WIFI_SSID     = "Sicovo"
-WIFI_PASSWORD = "12345688"
-BACKEND_URL   = "http://localhost:5173/smps/ingest"
+# ── Pico Access Point settings ──────────────────────────────────────────────
+PICO_SSID     = "SmartGrid-Pico"
+PICO_PASSWORD = "smartgrid123"
+PICO_IP       = "192.168.4.1"
+PICO_PORT     = 8000
 # ─────────────────────────────────────────────────────────────────────────────
 
-def connect_wifi():
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    if not wlan.isconnected():
-        print("Connecting to WiFi...")
-        wlan.connect(WIFI_SSID, WIFI_PASSWORD)
-        timeout = 15
-        while not wlan.isconnected() and timeout > 0:
-            import time
-            time.sleep(1)
-            timeout -= 1
-    if wlan.isconnected():
-        print("WiFi connected:", wlan.ifconfig()[0])
-    else:
-        print("WiFi connection failed — continuing without network")
-    return wlan
+def setup_access_point():
+    """Configure Pico as WiFi Access Point"""
+    ap = network.WLAN(network.AP_IF)
+    ap.active(True)
+    ap.config(essid=PICO_SSID, password=PICO_PASSWORD, authmode=3)  # WPA2
+    
+    print(f"Access Point '{PICO_SSID}' started")
+    print(f"IP: {PICO_IP}")
+    print(f"Server running on http://{PICO_IP}:{PICO_PORT}")
+    return ap
+
+def start_http_server():
+    """Start a simple HTTP server on the Pico"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind((PICO_IP, PICO_PORT))
+    sock.listen(1)
+    sock.settimeout(1)  # Non-blocking with 1 second timeout
+    
+    print(f"HTTP Server listening on {PICO_IP}:{PICO_PORT}")
+    return sock
+
+def handle_http_request(client_sock, request):
+    """Parse HTTP request and return appropriate response"""
+    try:
+        lines = request.split('\r\n')
+        if not lines:
+            return None
+        
+        req_line = lines[0].split()
+        if len(req_line) < 2:
+            return None
+        
+        method = req_line[0]
+        path = req_line[1]
+        
+        # Route handlers
+        if path == "/" or path == "/smps/latest":
+            response = f"""HTTP/1.1 200 OK\r
+Content-Type: application/json\r
+Access-Control-Allow-Origin: *\r
+Content-Length: {len(dashboard_json(latest_data))}\r
+\r
+{dashboard_json(latest_data)}"""
+            
+        elif path == "/smps/snapshots":
+            response = f"""HTTP/1.1 200 OK\r
+Content-Type: application/json\r
+Access-Control-Allow-Origin: *\r
+Content-Length: {len(dashboard_json(latest_data))}\r
+\r
+{dashboard_json(latest_data)}"""
+            
+        else:
+            response = """HTTP/1.1 404 Not Found\r
+Content-Type: application/json\r
+\r
+{"error": "Not Found"}"""
+        
+        return response
+    except Exception as e:
+        print(f"Error handling request: {e}")
+        return None
 
 # Set up some pin allocations for the Analogues and switches
 va_pin = ADC(Pin(28))
@@ -103,19 +151,6 @@ def dashboard_json(data):
                 data["i_err"], data["i_ref"]
         )
 
-
-def send_json(data):
-    try:
-        body = dashboard_json(data)
-        r = urequests.post(
-            BACKEND_URL,
-            data=body,
-            headers={"Content-Type": "application/json"},
-        )
-        r.close()
-    except Exception as e:
-        print("HTTP POST failed:", e)
-
 # saturation function for anything you want saturated within bounds
 def saturate(signal, upper, lower): 
     if signal > upper:
@@ -170,7 +205,8 @@ class ina219:
 
 
 # Here we go, main function, always executes
-connect_wifi()
+setup_access_point()
+http_server = start_http_server()
 
 while True:
     if first_run:
@@ -182,6 +218,19 @@ while True:
         
         # This starts a 1kHz timer which we use to control the execution of the control loops and sampling
         loop_timer = Timer(mode=Timer.PERIODIC, freq=1000, callback=tick)
+    
+    # Handle incoming HTTP requests (non-blocking)
+    try:
+        client_sock, client_addr = http_server.accept()
+        request = client_sock.recv(1024).decode()
+        response = handle_http_request(client_sock, request)
+        if response:
+            client_sock.sendall(response.encode())
+        client_sock.close()
+    except OSError:
+        pass  # Timeout, no connection waiting
+    except Exception as e:
+        print(f"HTTP Error: {e}")
     
     # If the timer has elapsed it will execute some functions, otherwise it skips everything and repeats until the timer elapses
     if timer_elapsed == 1: # This is executed at 1kHz
@@ -275,6 +324,6 @@ while True:
         latest_data["i_err"] = i_err
         latest_data["i_ref"] = i_ref
 
-        # Emit one JSON line at ~10 Hz over USB serial.
+        # Data is served via HTTP GET requests
         if count % 100 == 0:
-            send_json(latest_data)
+            print("Latest data available at http://{}:{}/smps/latest".format(PICO_IP, PICO_PORT))
