@@ -15,7 +15,29 @@ def setup_access_point():
     """Configure Pico as WiFi Access Point"""
     ap = network.WLAN(network.AP_IF)
     ap.active(True)
-    ap.config(essid=PICO_SSID, password=PICO_PASSWORD, authmode=3)  # WPA2
+
+    # Different MicroPython ports expose different AP config keys.
+    # Try common combinations used by ESP and Pico W/cyw43 builds.
+    config_attempts = [
+        {"essid": PICO_SSID, "password": PICO_PASSWORD, "authmode": 3},
+        {"essid": PICO_SSID, "password": PICO_PASSWORD},
+        {"ssid": PICO_SSID, "password": PICO_PASSWORD},
+        {"ssid": PICO_SSID, "key": PICO_PASSWORD},
+        {"essid": PICO_SSID},
+        {"ssid": PICO_SSID},
+    ]
+
+    configured = False
+    for cfg in config_attempts:
+        try:
+            ap.config(**cfg)
+            configured = True
+            break
+        except (TypeError, ValueError):
+            pass
+
+    if not configured:
+        raise RuntimeError("Could not configure Access Point: unsupported WLAN config keys")
     
     print(f"Access Point '{PICO_SSID}' started")
     print(f"IP: {PICO_IP}")
