@@ -74,21 +74,6 @@ function App() {
 
       <section className="panel">
         <div className="panel-header">
-          <h3>SMPS Live</h3>
-          <p>{smpsLatest ? "Latest serial sample" : "Waiting for SMPS serial data"}</p>
-        </div>
-        <div className="cards cards-tight">
-          <StatCard title="Va" value={formatSmps(smpsLatest?.va)} />
-          <StatCard title="Vb" value={formatSmps(smpsLatest?.vb)} />
-          <StatCard title="Vpot" value={formatSmps(smpsLatest?.vpot)} />
-          <StatCard title="iL" value={formatSmps(smpsLatest?.iL)} />
-          <StatCard title="Duty" value={formatInt(smpsLatest?.duty)} />
-          <StatCard title="CL / BU / OC" value={formatFlags(smpsLatest)} />
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
           <h3>Historic Grid State</h3>
           <p>Last 50 backend snapshots</p>
         </div>
@@ -106,6 +91,21 @@ function App() {
               <Line type="monotone" dataKey="sell_price" name="Sell Price" strokeWidth={3} dot={false} />
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h3>SMPS Live</h3>
+          <p>{smpsLatest ? "Latest serial sample" : "Waiting for SMPS serial data"}</p>
+        </div>
+        <div className="cards cards-tight">
+          <StatCard title="Va" value={formatSmps(smpsLatest?.va)} />
+          <StatCard title="Vb" value={formatSmps(smpsLatest?.vb)} />
+          <StatCard title="Vpot" value={formatSmps(smpsLatest?.vpot)} />
+          <StatCard title="iL" value={formatSmps(smpsLatest?.iL)} />
+          <StatCard title="Duty" value={formatInt(smpsLatest?.duty)} />
+          <StatCard title="CL / BU / OC" value={formatFlags(smpsLatest)} />
         </div>
       </section>
 
