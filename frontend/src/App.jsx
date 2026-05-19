@@ -7,6 +7,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  BarChart,
+  Bar
 } from "recharts";
 import "./App.css";
 
@@ -48,120 +50,189 @@ function App() {
   }, []);
 
   return (
-    <div className="page">
-      <header className="header">
-        <div>
-          <h1>Smart Grid Dashboard</h1>
-          <p>Live energy demand, solar input and grid pricing</p>
+    <div className="app-layout">
+      {/* 侧边栏导航 (完美还原截图左侧) */}
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <span>🐙</span> Octopus
         </div>
-        <div className="status">Tick {latest?.tick ?? "-"}</div>
-      </header>
+        <div className="nav-item">🏠 Home</div>
+        <div className="nav-item active">⚡ My Energy</div>
+        <div className="nav-item">💳 Payments</div>
+        <div className="nav-item">🐙 Octopus</div>
+      </aside>
 
-      <section className="hero">
-        <div>
-          <p className="label">Current Demand</p>
-          <h2>{typeof latest?.instant_demand === "number" ? `${latest.instant_demand.toFixed(2)} W` : "-"}</h2>
-          <p>Live domestic emulator load</p>
-        </div>
-      </section>
+      {/* 主面板区 */}
+      <main className="main-content">
+        <div className="dashboard-container">
+          
+          <h1 className="page-title">My energy insights</h1>
 
-      <section className="cards">
-        <StatCard title="Sun" value={typeof latest?.sun === "number" ? `${latest.sun.toFixed(0)}%` : "-"} />
-        <StatCard title="Buy Price" value={typeof latest?.buy_price === "number" ? `${latest.buy_price.toFixed(0)}` : "-"} />
-        <StatCard title="Sell Price" value={typeof latest?.sell_price === "number" ? `${latest.sell_price.toFixed(0)}` : "-"} />
-        <StatCard title="Data Points" value={snapshots.length} />
-      </section>
+          {/* 顶部分类 Tab */}
+          <div className="tabs-container">
+            <div className="tab active">Day</div>
+            <div className="tab">Week</div>
+            <div className="tab">Month</div>
+            <div className="tab">Year</div>
+            <div className="tab">Custom</div>
+          </div>
+          <p className="date-subtitle">Latest Tick: {latest?.tick ?? "..."}</p>
 
-      <section className="panel">
-        <div className="panel-header">
-          <h3>Historic Grid State</h3>
-          <p>Last 50 backend snapshots</p>
-        </div>
+          {/* 第一块: Electricity (映射为 Grid State 和 Demand) */}
+          <section className="card">
+            <div className="card-header">
+              <span className="icon-cyan">✦</span> Grid State (Electricity)
+            </div>
+            
+            <div className="chart-wrapper">
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={snapshots}>
+                  <XAxis dataKey="tick" stroke="#a69ec4" tick={{fontSize: 12}} tickLine={false} axisLine={false} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#14052e', borderColor: '#27134d', borderRadius: '8px' }}
+                    itemStyle={{ color: '#00f0ff' }}
+                  />
+                  {/* 使用青色柱状图模拟 Octopus 的耗电图 */}
+                  <Bar dataKey="instant_demand" name="Demand (W)" fill="#00f0ff" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
 
-        <div className="chart">
-          <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={snapshots}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="tick" />
-              <YAxis />
-              <Tooltip />
-              <Line type="monotone" dataKey="instant_demand" name="Demand" strokeWidth={3} dot={false} />
-              <Line type="monotone" dataKey="sun" name="Sun" strokeWidth={3} dot={false} />
-              <Line type="monotone" dataKey="buy_price" name="Buy Price" strokeWidth={3} dot={false} />
-              <Line type="monotone" dataKey="sell_price" name="Sell Price" strokeWidth={3} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </section>
+            <div className="chart-wrapper">
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={snapshots}>
+                  <XAxis dataKey="tick" stroke="#a69ec4" tick={{fontSize: 12}} tickLine={false} axisLine={false} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#14052e', borderColor: '#27134d', borderRadius: '8px' }}
+                    itemStyle={{ color: '#00f0ff' }}
+                  />
+                  {/* 使用青色柱状图模拟 Octopus 的耗电图 */}
+                  <Bar dataKey="sun" name="Solar Input" fill="#ffc800" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
 
-      <section className="panel">
-        <div className="panel-header">
-          <h3>SMPS Live</h3>
-          <p>{smpsLatest ? "Latest serial sample" : "Waiting for SMPS serial data"}</p>
-        </div>
-        <div className="cards cards-tight">
-          <StatCard title="Va" value={formatSmps(smpsLatest?.va)} />
-          <StatCard title="Vb" value={formatSmps(smpsLatest?.vb)} />
-          <StatCard title="Vpot" value={formatSmps(smpsLatest?.vpot)} />
-          <StatCard title="iL" value={formatSmps(smpsLatest?.iL)} />
-          <StatCard title="Duty" value={formatInt(smpsLatest?.duty)} />
-          <StatCard title="CL / BU / OC" value={formatFlags(smpsLatest)} />
-        </div>
-      </section>
+            <div className="stats-row">
+              <div className="stat-box">
+                <p>Current Demand</p>
+                <h3>{typeof latest?.instant_demand === "number" ? `${latest.instant_demand.toFixed(2)} W` : "-"}</h3>
+              </div>
+              <div className="stat-box">
+                <p>Solar Input (Sun)</p>
+                <h3>{typeof latest?.sun === "number" ? `${latest.sun.toFixed(0)}%` : "-"}</h3>
+              </div>
+            </div>
+          </section>
 
-      <section className="panel">
-        <div className="panel-header">
-          <h3>SMPS History</h3>
-          <p>Last 120 SMPS samples from backend</p>
-        </div>
+          {/* 第二块: Gas 区域 (映射为 SMPS Live 状态) */}
+          <section className="card">
+            <div className="card-header">
+              <span className="icon-orange">🔥</span> SMPS Data (Gas)
+            </div>
 
-        <div className="chart">
-          <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={smpsSnapshots}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="id" />
-              <YAxis />
-              <Tooltip />
-              <Line type="monotone" dataKey="va" name="Va" strokeWidth={3} dot={false} />
-              <Line type="monotone" dataKey="vb" name="Vb" strokeWidth={3} dot={false} />
-              <Line type="monotone" dataKey="iL" name="iL" strokeWidth={3} dot={false} />
-              <Line type="monotone" dataKey="i_ref" name="i_ref" strokeWidth={3} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+            {/* 如果没有SMPS数据，展示经典的 Fiddlesticks 卡片 */}
+            {!smpsLatest ? (
+              <div className="fiddlesticks">
+                <h2>Fiddlesticks!</h2>
+                <p>It looks like there aren't any live SMPS readings right now. Waiting for serial data on the backend.</p>
+                <button className="btn-pink">Go to latest readings</button>
+              </div>
+            ) : (
+              <div className="fiddlesticks">
+                <h2>SMPS is Live</h2>
+                <div className="stats-row" style={{ flexWrap: 'wrap' }}>
+                  <div className="stat-box" style={{minWidth: '45%'}}><p>Va</p><h3>{formatSmps(smpsLatest?.va)}</h3></div>
+                  <div className="stat-box" style={{minWidth: '45%'}}><p>Vb</p><h3>{formatSmps(smpsLatest?.vb)}</h3></div>
+                  <div className="stat-box" style={{minWidth: '45%'}}><p>iL</p><h3>{formatSmps(smpsLatest?.iL)}</h3></div>
+                  <div className="stat-box" style={{minWidth: '45%'}}><p>Flags</p><h3>{formatFlags(smpsLatest)}</h3></div>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* 第三块: 洞察 Insights (映射为 Buy / Sell Prices) */}
+          <section className="two-col">
+            <div className="insight-card">
+              <div className="sub">Current Market...</div>
+              <div className="val icon-cyan">
+                {typeof latest?.buy_price === "number" ? latest.buy_price.toFixed(0) : "-"}
+              </div>
+              <div>Buy Price (pence/kWh)</div>
+              <p style={{fontSize: 12, color: '#a69ec4', marginTop: 12}}>
+                Grid import price for this current tick.
+              </p>
+            </div>
+            
+            <div className="insight-card tree-bg">
+              <div className="sub">Exporting power...</div>
+              <div className="val icon-green">
+                {typeof latest?.sell_price === "number" ? latest.sell_price.toFixed(0) : "-"}
+              </div>
+              <div>Sell Price (pence/kWh)</div>
+              {/* 装饰性文字模拟原图的树木碳排卡片 */}
+              <p style={{fontSize: 12, color: '#a69ec4', marginTop: 12, position: 'relative', zIndex: 2}}>
+                Earnings if feeding back to grid.
+              </p>
+            </div>
+          </section>
+
+          {/* 第四块: Get your geek on */}
+          <section className="card">
+            <h2>Get your geek on</h2>
+            <p style={{color: '#a69ec4', marginBottom: 20}}>
+              Download your full backend snapshot dataset to analyze offline.
+            </p>
+            <div style={{ padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', color: '#00f0ff'}}>
+              ✦ 50 Data points recorded
+            </div>
+            <button className="btn-pink" onClick={() => console.log(snapshots)}>
+              Download your smart data
+            </button>
+          </section>
+
+          {/* 第五块: When you use electricity matters (映射为 SMPS 历史图表) */}
+          <section className="card green-card">
+            <div className="green-card-header">
+              <span className="icon-green">🌿</span> SMPS History until latest tick
+            </div>
+            <p>
+              Monitor the Va, Vb and iL over the last 120 samples. Green sections indicate healthy power conversion.
+            </p>
+            
+            <div className="chart-wrapper">
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={smpsSnapshots}>
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#14052e', borderColor: '#27134d' }}
+                  />
+                  {/* 使用青色、绿色和品红色渲染线条 */}
+                  <Line type="step" dataKey="va" stroke="#00f0ff" strokeWidth={2} dot={false} />
+                  <Line type="step" dataKey="vb" stroke="#00e676" strokeWidth={2} dot={false} />
+                  <Line type="step" dataKey="iL" stroke="#f721a3" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            
+            <div style={{marginTop: 16, borderTop: '1px solid #3c267a', paddingTop: 16}}>
+              <p style={{color: '#00e676', fontWeight: 'bold'}}>✓ System is active: good time to log data.</p>
+            </div>
+          </section>
+
         </div>
-      </section>
+      </main>
     </div>
   );
 }
 
+// 格式化辅助函数保持不变
 function formatSmps(value) {
-  if (typeof value !== "number") {
-    return "-";
-  }
+  if (typeof value !== "number") return "-";
   return value.toFixed(3);
 }
 
-function formatInt(value) {
-  if (typeof value !== "number") {
-    return "-";
-  }
-  return String(Math.round(value));
-}
-
 function formatFlags(sample) {
-  if (!sample) {
-    return "-";
-  }
+  if (!sample) return "-";
   return `${sample.CL ?? "-"}/${sample.BU ?? "-"}/${sample.OC ?? "-"}`;
-}
-
-function StatCard({ title, value }) {
-  return (
-    <div className="card">
-      <p>{title}</p>
-      <h3>{value}</h3>
-    </div>
-  );
 }
 
 export default App;
