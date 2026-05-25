@@ -1,8 +1,7 @@
-# wifi_config.py — fill in your hotspot credentials and copy to each Pico W.
+# wifi_config.py — credentials used by STA modules (pv/grid/export/led).
 #
-# Kept in a separate file so it's easy to git-ignore. The README warns that the
-# college WiFi is hard to use with embedded devices, so this is expected to
-# point at a phone hotspot.
+# Keep this aligned with the cap AP settings in cap_smps.py.
 
-WIFI_SSID = "HongZhe"
-WIFI_PASS = "999999999"
+WIFI_SSID = "SmartGrid-Cap"
+WIFI_PASS = "smartgrid123"
+BACKEND_URL = "http://172.20.10.2:8000/smps/ingest"

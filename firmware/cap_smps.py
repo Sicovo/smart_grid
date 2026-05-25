@@ -28,12 +28,164 @@
 #   i_cmd > 0 charges, i_cmd < 0 discharges.
 #
 # Telemetry: { role, v_cap, vb_bus, iL, p_cap, soc_pct, energy_J,
-#              i_cmd, i_cmd_eff, pwm, trip, trip_reason, enable, wd }
+#              i_cmd, i_cmd_eff, pwm, trip, trip_reason, enable, wd, peers_rx }
 # Commands:  { enable, i_cmd, reset_trip }
 
-import time
+import network, socket, json, _thread, gc, time
 from machine import Pin, ADC, I2C, PWM, Timer
-from common import wifi_connect, start_http_thread
+
+# ---------------- AP + HTTP server settings ----------------
+
+PICO_SSID = "SmartGrid-Cap"
+PICO_PASSWORD = "smartgrid123"
+PICO_IP = "192.168.4.1"
+PICO_PORT = 8000
+
+# CORS headers so dashboard.html can call us from file:// origin.
+CORS = (b'Access-Control-Allow-Origin: *\r\n'
+        b'Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n'
+        b'Access-Control-Allow-Headers: Content-Type\r\n')
+
+
+def _load_dashboard_html():
+    """Try to load dashboard.html from Pico filesystem.
+    If unavailable, serve a tiny fallback page so '/' still works."""
+    try:
+        with open('dashboard.html', 'rb') as f:
+            return f.read()
+    except Exception:
+        return (b'<!doctype html><html><head><meta charset="utf-8">'
+                b'<meta name="viewport" content="width=device-width,initial-scale=1">'
+                b'<title>Cap Dashboard</title></head><body style="font-family:monospace;padding:16px;">'
+                b'<h3>cap_smps is running</h3>'
+                b'<p>Endpoints: <a href="/tlm">/tlm</a>, /cmd, /peer, /smps/latest</p>'
+                b'<p>Copy dashboard.html onto this Pico to serve the full dashboard at /</p>'
+                b'</body></html>')
+
+
+DASHBOARD_HTML = _load_dashboard_html()
+
+
+def setup_access_point():
+    ap = network.WLAN(network.AP_IF)
+    ap.active(True)
+
+    # Try common key names across MicroPython builds.
+    config_attempts = [
+        {'essid': PICO_SSID, 'password': PICO_PASSWORD, 'authmode': 3},
+        {'essid': PICO_SSID, 'password': PICO_PASSWORD},
+        {'ssid': PICO_SSID, 'password': PICO_PASSWORD},
+        {'ssid': PICO_SSID, 'key': PICO_PASSWORD},
+        {'essid': PICO_SSID},
+        {'ssid': PICO_SSID},
+    ]
+    for cfg in config_attempts:
+        try:
+            ap.config(**cfg)
+            break
+        except (TypeError, ValueError):
+            pass
+
+    # Fixed AP-side IP for predictable dashboard target.
+    try:
+        ap.ifconfig((PICO_IP, '255.255.255.0', PICO_IP, PICO_IP))
+    except Exception:
+        pass
+    return ap
+
+
+def _http_server(state, ip, port):
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((ip, port))
+    s.listen(2)
+    s.settimeout(0.5)
+    while not state.get('shutdown', False):
+        cl = None
+        try:
+            cl, _addr = s.accept()
+            cl.settimeout(2.0)
+            req = cl.recv(2048)
+            if not req:
+                cl.close()
+                continue
+            first = req.split(b'\r\n', 1)[0]
+            parts = first.split(b' ')
+            if len(parts) < 2:
+                cl.close()
+                continue
+            method, path = parts[0], parts[1]
+
+            if method == b'OPTIONS':
+                cl.send(b'HTTP/1.1 204 No Content\r\n' + CORS +
+                        b'Content-Length: 0\r\nConnection: close\r\n\r\n')
+            elif method == b'GET' and (path == b'/' or path == b'/index.html' or path == b'/dashboard.html'):
+                cl.send(b'HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n' + CORS +
+                        b'Content-Length: ' + str(len(DASHBOARD_HTML)).encode() +
+                        b'\r\nConnection: close\r\n\r\n' + DASHBOARD_HTML)
+            elif method == b'GET' and (path == b'/tlm' or
+                                        path == b'/smps/latest' or path == b'/smps/snapshots'):
+                body = json.dumps(state['tlm']).encode()
+                cl.send(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n' + CORS +
+                        b'Content-Length: ' + str(len(body)).encode() +
+                        b'\r\nConnection: close\r\n\r\n' + body)
+            elif method == b'POST' and path == b'/cmd':
+                idx = req.find(b'\r\n\r\n')
+                body = req[idx + 4:] if idx >= 0 else b''
+                try:
+                    cmd = json.loads(body)
+                    if isinstance(cmd, dict):
+                        state['cmd'].update(cmd)
+                        state['last_cmd_ms'] = time.ticks_ms()
+                        cl.send(b'HTTP/1.1 200 OK\r\n' + CORS +
+                                b'Content-Length: 2\r\nConnection: close\r\n\r\nOK')
+                    else:
+                        raise ValueError('not a JSON object')
+                except Exception as e:
+                    err = ('{"err":"%s"}' % str(e)).encode()
+                    cl.send(b'HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n' + CORS +
+                            b'Content-Length: ' + str(len(err)).encode() +
+                            b'\r\nConnection: close\r\n\r\n' + err)
+            elif method == b'POST' and path == b'/peer':
+                idx = req.find(b'\r\n\r\n')
+                body = req[idx + 4:] if idx >= 0 else b''
+                try:
+                    peer = json.loads(body)
+                    if not isinstance(peer, dict):
+                        raise ValueError('peer payload must be JSON object')
+                    role = str(peer.get('role', 'unknown'))
+                    state['peers'][role] = {
+                        'rx_ms': time.ticks_ms(),
+                        'data': peer,
+                    }
+                    cl.send(b'HTTP/1.1 200 OK\r\n' + CORS +
+                            b'Content-Length: 2\r\nConnection: close\r\n\r\nOK')
+                except Exception as e:
+                    err = ('{"err":"%s"}' % str(e)).encode()
+                    cl.send(b'HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n' + CORS +
+                            b'Content-Length: ' + str(len(err)).encode() +
+                            b'\r\nConnection: close\r\n\r\n' + err)
+            else:
+                cl.send(b'HTTP/1.1 404 Not Found\r\n' + CORS +
+                        b'Content-Length: 0\r\nConnection: close\r\n\r\n')
+        except Exception:
+            pass
+        finally:
+            if cl is not None:
+                try:
+                    cl.close()
+                except Exception:
+                    pass
+            gc.collect()
+    try:
+        s.close()
+    except Exception:
+        pass
+
+
+def start_http_thread_ap(state, ip=PICO_IP, port=PICO_PORT):
+    state.setdefault('shutdown', False)
+    _thread.start_new_thread(_http_server, (state, ip, port))
 
 # ---------------- Hardware ----------------
 
@@ -112,6 +264,7 @@ V_CAP_CHARGE_CUTOFF = 15.7
 state = {
     'cmd':         {'enable': 1, 'i_cmd': 0.0},
     'tlm':         {},
+    'peers':       {},
     'last_cmd_ms': time.ticks_ms(),
 }
 
@@ -147,7 +300,6 @@ def apply_soft_taper(i_cmd_raw, v_cap):
 
 # Bank capacitance: 2 × 0.25 F in parallel.
 C_BANK_F = 0.5
-
 def soc_pct(v_cap):
     """0 % at V_CAP_MIN, 100 % at V_CAP_MAX, energy-weighted (E = ½CV²)."""
     v = max(V_CAP_MIN, min(V_CAP_MAX, v_cap))
@@ -170,9 +322,10 @@ def tick(_t):
 print("Cap SMPS booting...")
 ina_init()
 pwm.duty_u16(PWM_MIN)
-wlan = wifi_connect("cap")
-print("WiFi:", wlan.ifconfig() if wlan.isconnected() else "NOT CONNECTED")
-start_http_thread(state)
+ap = setup_access_point()
+print("AP:", ap.ifconfig())
+print("[cap] HTTP:", "http://%s:%d" % (PICO_IP, PICO_PORT))
+start_http_thread_ap(state)
 
 loop_timer = Timer(mode=Timer.PERIODIC, freq=1000, callback=tick)
 print("[cap] running. Ctrl+C to stop.")
@@ -221,6 +374,13 @@ try:
                 i_cmd_eff = i_cmd_eff * vb_scale
 
             # ---- Telemetry ----
+            peers_rx = {}
+            for _k, _v in state['peers'].items():
+                try:
+                    peers_rx[_k] = _v.get('rx_ms', 0)
+                except Exception:
+                    pass
+
             state['tlm'] = {
                 'role':        'cap',
                 'v_cap':       _va,
@@ -236,6 +396,7 @@ try:
                 'trip_reason': _trip_reason,
                 'enable':      1 if enabled else 0,
                 'wd':          0,
+                'peers_rx':    peers_rx,
             }
 
             # ---- Safety guards ----

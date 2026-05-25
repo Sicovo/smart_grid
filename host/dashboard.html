@@ -29,6 +29,8 @@
   .hosts input { background: #0d0d0d; color: var(--ink); border: 1px solid var(--border);
                  padding: 5px 7px; font-family: inherit; font-size: 12px; width: 160px; }
 
+  .top-center-actions { text-align: center; margin: -4px 0 12px 0; }
+
   .gauge { background: var(--panel); border: 1px solid var(--border);
            padding: 14px 16px; margin-bottom: 16px; }
   .gauge-top { display: flex; justify-content: space-between; align-items: baseline;
@@ -176,6 +178,25 @@
 <h1>SMART GRID — CW PV variant</h1>
 <div class="sub">Polls every 1 s. PV module supports web-MPPT (fetches /sun from icelec50015 server).</div>
 
+<div class="top-center-actions">
+  <button id="backend-wifi-toggle" onclick="toggleBackendWifiFields()">WiFi setup</button>
+  <div id="backend-wifi-fields" style="display:none; margin-top:6px; padding:8px; background:var(--card); border:1px solid var(--border); text-align:left; max-width:760px; margin-left:auto; margin-right:auto;">
+    <div class="row">
+      <label>WiFi SSID</label>
+      <input type="text" id="backend-wifi-ssid" value="" style="flex:1; background:#0d0d0d; color:var(--ink); border:1px solid var(--border); padding:4px 6px; font-family:inherit; font-size:12px;">
+    </div>
+    <div class="row">
+      <label>WiFi Password</label>
+      <input type="text" id="backend-wifi-pass" value="" style="flex:1; background:#0d0d0d; color:var(--ink); border:1px solid var(--border); padding:4px 6px; font-family:inherit; font-size:12px;">
+    </div>
+    <div class="row">
+      <label>Backend URL</label>
+      <input type="text" id="backend-wifi-backend" value="http://172.20.10.2:8000/smps/ingest" style="flex:1; background:#0d0d0d; color:var(--ink); border:1px solid var(--border); padding:4px 6px; font-family:inherit; font-size:12px;">
+      <button id="backend-wifi-send" onclick="sendBackendWifiSetup()">Send Setup</button>
+    </div>
+  </div>
+</div>
+
 <div class="hosts">
   <span><label>PV (cw)</label><input id="host-pv"     value="pv.local"></span>
   <span><label>Grid</label><input id="host-grid"   value="grid.local"></span>
@@ -218,6 +239,11 @@
 const MODULES = ['pv', 'grid', 'export', 'cap', 'lux', 'led'];
 const GAUGE_LO = 8.0, GAUGE_HI = 12.0;
 const GRID_TARGET_DEFAULT = 9.5, EXPORT_TARGET_DEFAULT = 10.5;
+const CAP_WIFI_DEFAULT = {
+  ssid: '',
+  password: '',
+  backendUrl: 'http://172.20.10.2:8000/smps/ingest'
+};
 
 let lastBusVoltage = null;
 
@@ -314,6 +340,40 @@ function loadHosts() {
     const v = localStorage.getItem('host-cw-' + n);
     if (v) document.getElementById('host-' + n).value = v;
   });
+}
+
+function toggleBackendWifiFields() {
+  const box = document.getElementById('backend-wifi-fields');
+  const btn = document.getElementById('backend-wifi-toggle');
+  if (!box || !btn) return;
+  const open = (box.style.display === 'none' || box.style.display === '');
+  box.style.display = open ? 'block' : 'none';
+  btn.textContent = open ? 'Hide WiFi setup' : 'WiFi setup';
+}
+
+async function sendBackendWifiSetup() {
+  const ssidEl = document.getElementById('backend-wifi-ssid');
+  const passEl = document.getElementById('backend-wifi-pass');
+  const backendEl = document.getElementById('backend-wifi-backend');
+  const ssid = ssidEl ? ssidEl.value.trim() : CAP_WIFI_DEFAULT.ssid;
+  const password = passEl ? passEl.value : CAP_WIFI_DEFAULT.password;
+  const backendUrl = backendEl ? backendEl.value.trim() : CAP_WIFI_DEFAULT.backendUrl;
+
+  const payload = {
+    wifi_ssid: ssid,
+    wifi_password: password,
+    backend_url: backendUrl,
+    connect_wifi: 1,
+  };
+  const targetModules = ['cap', 'pv', 'grid', 'export', 'led'];
+  const results = await Promise.all(targetModules.map(name => send(name, payload)));
+  const ok = results.every(Boolean);
+
+  const btn = document.getElementById('backend-wifi-send');
+  if (!btn) return;
+  const old = btn.textContent;
+  btn.textContent = ok ? 'Sent ✓' : 'Failed';
+  setTimeout(() => { btn.textContent = old; }, 900);
 }
 
 function url(name, path) {
@@ -562,6 +622,10 @@ function renderModule(name, data) {
   setStatus(name, data);
   const d = data || {};
 
+  const wifiTxt = d.wifi_connected ? 'connected' : 'disconnected';
+  const postTxt = d.backend_post_ok ? 'ok' : 'fail';
+  const netModeTxt = d.net_mode || 'offline';
+
   const banner = document.getElementById('mod-' + name + '-trip');
   if (banner) {
     if (d.trip) {
@@ -585,6 +649,7 @@ function renderModule(name, data) {
     case 'lux':    html = `<div class="stats">${statsLux(d)}</div>`; break;
     case 'led':    html = statsLED(d); break;
   }
+  html += `<div class="stat-sub" style="margin-top:8px">net ${netModeTxt} · wifi ${wifiTxt} · backend ${postTxt}</div>`;
   body.innerHTML = html;
 
   // PV-specific overlays for the cw variant
@@ -692,7 +757,8 @@ function build() {
         <button onclick="send('cap',{enable:1})">Enable</button>
         <button class="danger" onclick="send('cap',{enable:0,i_cmd:0})">Disable</button>
         <button class="warn" onclick="send('cap',{reset_trip:1})">⚠ Reset Trip</button>
-      </div>`) +
+      </div>
+      `) +
     moduleShell('lux', 'Lux — irradiance sensor', `
       <div class="row">
         <label>Step 1</label>
