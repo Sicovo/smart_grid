@@ -1,9 +1,14 @@
 import network
-import urequests
 import json
+import socket
 import time
 from machine import Pin, I2C, ADC, PWM, Timer
 
+# ── Pico Access Point settings ──────────────────────────────────────────────
+PICO_SSID     = "SmartGrid-Pico"
+PICO_PASSWORD = "smartgrid123"
+PICO_IP       = "192.168.4.1"
+PICO_PORT     = 8000
 # ── WiFi / backend settings ──────────────────────────────────────────────────
 WIFI_SSID     = "Sicovo"
 WIFI_PASSWORD = "12345688"
@@ -13,6 +18,90 @@ BACKEND_URL   = "http://172.20.10.2:8000/smps/ingest"
 
 wlan = None
 
+def setup_access_point():
+    """Configure Pico as WiFi Access Point"""
+    ap = network.WLAN(network.AP_IF)
+    ap.active(True)
+
+    # Different MicroPython ports expose different AP config keys.
+    # Try common combinations used by ESP and Pico W/cyw43 builds.
+    config_attempts = [
+        {"essid": PICO_SSID, "password": PICO_PASSWORD, "authmode": 3},
+        {"essid": PICO_SSID, "password": PICO_PASSWORD},
+        {"ssid": PICO_SSID, "password": PICO_PASSWORD},
+        {"ssid": PICO_SSID, "key": PICO_PASSWORD},
+        {"essid": PICO_SSID},
+        {"ssid": PICO_SSID},
+    ]
+
+    configured = False
+    for cfg in config_attempts:
+        try:
+            ap.config(**cfg)
+            configured = True
+            break
+        except (TypeError, ValueError):
+            pass
+
+    if not configured:
+        raise RuntimeError("Could not configure Access Point: unsupported WLAN config keys")
+    
+    print(f"Access Point '{PICO_SSID}' started")
+    print(f"IP: {PICO_IP}")
+    print(f"Server running on http://{PICO_IP}:{PICO_PORT}")
+    return ap
+
+def start_http_server():
+    """Start a simple HTTP server on the Pico"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind((PICO_IP, PICO_PORT))
+    sock.listen(1)
+    sock.settimeout(1)  # Non-blocking with 1 second timeout
+    
+    print(f"HTTP Server listening on {PICO_IP}:{PICO_PORT}")
+    return sock
+
+def handle_http_request(client_sock, request):
+    """Parse HTTP request and return appropriate response"""
+    try:
+        lines = request.split('\r\n')
+        if not lines:
+            return None
+        
+        req_line = lines[0].split()
+        if len(req_line) < 2:
+            return None
+        
+        method = req_line[0]
+        path = req_line[1]
+        
+        # Route handlers
+        if path == "/" or path == "/smps/latest":
+            response = f"""HTTP/1.1 200 OK\r
+Content-Type: application/json\r
+Access-Control-Allow-Origin: *\r
+Content-Length: {len(dashboard_json(latest_data))}\r
+\r
+{dashboard_json(latest_data)}"""
+            
+        elif path == "/smps/snapshots":
+            response = f"""HTTP/1.1 200 OK\r
+Content-Type: application/json\r
+Access-Control-Allow-Origin: *\r
+Content-Length: {len(dashboard_json(latest_data))}\r
+\r
+{dashboard_json(latest_data)}"""
+            
+        else:
+            response = """HTTP/1.1 404 Not Found\r
+Content-Type: application/json\r
+\r
+{"error": "Not Found"}"""
+        
+        return response
+    except Exception as e:
+        print(f"Error handling request: {e}")
+        return None
 def connect_wifi():
     global wlan
     wlan = network.WLAN(network.STA_IF)
@@ -185,7 +274,8 @@ class ina219:
 
 
 # Here we go, main function, always executes
-connect_wifi()
+setup_access_point()
+http_server = start_http_server()
 
 while True:
     if first_run:
@@ -197,6 +287,19 @@ while True:
         
         # This starts a 1kHz timer which we use to control the execution of the control loops and sampling
         loop_timer = Timer(mode=Timer.PERIODIC, freq=1000, callback=tick)
+    
+    # Handle incoming HTTP requests (non-blocking)
+    try:
+        client_sock, client_addr = http_server.accept()
+        request = client_sock.recv(1024).decode()
+        response = handle_http_request(client_sock, request)
+        if response:
+            client_sock.sendall(response.encode())
+        client_sock.close()
+    except OSError:
+        pass  # Timeout, no connection waiting
+    except Exception as e:
+        print(f"HTTP Error: {e}")
     
     # If the timer has elapsed it will execute some functions, otherwise it skips everything and repeats until the timer elapses
     if timer_elapsed == 1: # This is executed at 1kHz
@@ -290,6 +393,6 @@ while True:
         latest_data["i_err"] = i_err
         latest_data["i_ref"] = i_ref
 
-        # Emit one JSON line at ~10 Hz over USB serial.
+        # Data is served via HTTP GET requests
         if count % 100 == 0:
-            send_json(latest_data)
+            print("Latest data available at http://{}:{}/smps/latest".format(PICO_IP, PICO_PORT))

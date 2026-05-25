@@ -14,33 +14,83 @@ import "./App.css";
 
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL ??
-  `${window.location.protocol}//${window.location.hostname}:8000`;
+  "/api";
+
+const PICO_API_BASE =
+  import.meta.env.VITE_PICO_API_BASE_URL ??
+  "http://192.168.4.1:8000";
 
 function App() {
   const [latest, setLatest] = useState(null);
   const [snapshots, setSnapshots] = useState([]);
   const [smpsLatest, setSmpsLatest] = useState(null);
   const [smpsSnapshots, setSmpsSnapshots] = useState([]);
+  const [smpsSource, setSmpsSource] = useState("backend");
 
   async function fetchData() {
-    const [latestRes, snapshotsRes, smpsLatestRes, smpsSnapshotsRes] = await Promise.all([
-      fetch(`${API_BASE}/latest`),
-      fetch(`${API_BASE}/snapshots?limit=50`),
-      fetch(`${API_BASE}/smps/latest`),
-      fetch(`${API_BASE}/smps/snapshots?limit=120`),
-    ]);
+    try {
+      const [latestRes, snapshotsRes] = await Promise.all([
+        fetch(`${API_BASE}/latest`),
+        fetch(`${API_BASE}/snapshots?limit=50`),
+      ]);
 
-    const [latestData, snapshotsData, smpsLatestData, smpsSnapshotsData] = await Promise.all([
-      latestRes.json(),
-      snapshotsRes.json(),
-      smpsLatestRes.json(),
-      smpsSnapshotsRes.json(),
-    ]);
+      if (!latestRes.ok || !snapshotsRes.ok) {
+        throw new Error("Backend API request failed");
+      }
 
-    setLatest(latestData?.error ? null : latestData);
-    setSnapshots(Array.isArray(snapshotsData) ? snapshotsData : []);
-    setSmpsLatest(smpsLatestData?.error ? null : smpsLatestData);
-    setSmpsSnapshots(Array.isArray(smpsSnapshotsData) ? smpsSnapshotsData : []);
+      const [latestData, snapshotsData] = await Promise.all([
+        latestRes.json(),
+        snapshotsRes.json(),
+      ]);
+
+      let smpsLatestData = null;
+      let smpsSnapshotsData = [];
+      let source = "pico";
+
+      try {
+        const [smpsLatestRes, smpsSnapshotsRes] = await Promise.all([
+          fetch(`${PICO_API_BASE}/smps/latest`),
+          fetch(`${PICO_API_BASE}/smps/snapshots?limit=120`),
+        ]);
+
+        if (!smpsLatestRes.ok || !smpsSnapshotsRes.ok) {
+          throw new Error("Pico API request failed");
+        }
+
+        [smpsLatestData, smpsSnapshotsData] = await Promise.all([
+          smpsLatestRes.json(),
+          smpsSnapshotsRes.json(),
+        ]);
+      } catch (_err) {
+        source = "backend";
+        const [smpsLatestRes, smpsSnapshotsRes] = await Promise.all([
+          fetch(`${API_BASE}/smps/latest`),
+          fetch(`${API_BASE}/smps/snapshots?limit=120`),
+        ]);
+
+        if (!smpsLatestRes.ok || !smpsSnapshotsRes.ok) {
+          throw new Error("Backend SMPS API request failed");
+        }
+
+        [smpsLatestData, smpsSnapshotsData] = await Promise.all([
+          smpsLatestRes.json(),
+          smpsSnapshotsRes.json(),
+        ]);
+      }
+
+      setLatest(latestData?.error ? null : latestData);
+      setSnapshots(Array.isArray(snapshotsData) ? snapshotsData : []);
+      setSmpsLatest(smpsLatestData?.error ? null : smpsLatestData);
+      setSmpsSnapshots(Array.isArray(smpsSnapshotsData) ? smpsSnapshotsData : []);
+      setSmpsSource(source);
+    } catch (err) {
+      console.error("Failed to fetch dashboard data", err);
+      setLatest(null);
+      setSnapshots([]);
+      setSmpsLatest(null);
+      setSmpsSnapshots([]);
+      setSmpsSource("backend");
+    }
   }
 
   useEffect(() => {
