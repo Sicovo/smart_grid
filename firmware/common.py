@@ -162,6 +162,39 @@ CORS = (b'Access-Control-Allow-Origin: *\r\n'
         b'Access-Control-Allow-Headers: Content-Type\r\n')
 
 
+def _sendall(sock, data):
+    try:
+        sock.sendall(data)
+        return
+    except Exception:
+        pass
+    mv = memoryview(data)
+    sent = 0
+    while sent < len(data):
+        n = sock.send(mv[sent:])
+        if n is None or n <= 0:
+            break
+        sent += n
+
+
+def _serve_dashboard_html(sock):
+    # Stream file in chunks; avoids RAM spikes and truncated socket writes.
+    for p in ('dashboard.html', '/dashboard.html', 'index.html', '/index.html'):
+        try:
+            _sendall(sock, b'HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n' + CORS +
+                     b'Connection: close\r\n\r\n')
+            with open(p, 'rb') as f:
+                while True:
+                    chunk = f.read(1024)
+                    if not chunk:
+                        break
+                    _sendall(sock, chunk)
+            return True
+        except Exception:
+            pass
+    return False
+
+
 def _http_server(state, port):
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -187,11 +220,18 @@ def _http_server(state, port):
             if method == b'OPTIONS':
                 cl.send(b'HTTP/1.1 204 No Content\r\n' + CORS +
                         b'Content-Length: 0\r\nConnection: close\r\n\r\n')
+            elif method == b'GET' and (path == b'/' or path == b'/dashboard.html' or path == b'/index.html'):
+                if not _serve_dashboard_html(cl):
+                    body = (b'<html><body><h3>dashboard.html not found</h3>'
+                            b'<p>Upload dashboard.html to the Pico filesystem.</p></body></html>')
+                    _sendall(cl, b'HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n' + CORS +
+                             b'Content-Length: ' + str(len(body)).encode() +
+                             b'\r\nConnection: close\r\n\r\n' + body)
             elif method == b'GET' and path == b'/tlm':
                 body = json.dumps(state['tlm']).encode()
-                cl.send(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n' + CORS +
-                        b'Content-Length: ' + str(len(body)).encode() +
-                        b'\r\nConnection: close\r\n\r\n' + body)
+                _sendall(cl, b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n' + CORS +
+                         b'Content-Length: ' + str(len(body)).encode() +
+                         b'\r\nConnection: close\r\n\r\n' + body)
             elif method == b'POST' and path == b'/cmd':
                 idx = req.find(b'\r\n\r\n')
                 body = req[idx + 4:] if idx >= 0 else b''
@@ -200,18 +240,18 @@ def _http_server(state, port):
                     if isinstance(cmd, dict):
                         state['cmd'].update(cmd)
                         state['last_cmd_ms'] = time.ticks_ms()
-                        cl.send(b'HTTP/1.1 200 OK\r\n' + CORS +
-                                b'Content-Length: 2\r\nConnection: close\r\n\r\nOK')
+                        _sendall(cl, b'HTTP/1.1 200 OK\r\n' + CORS +
+                                 b'Content-Length: 2\r\nConnection: close\r\n\r\nOK')
                     else:
                         raise ValueError('not a JSON object')
                 except Exception as e:
                     err = ('{"err":"%s"}' % str(e)).encode()
-                    cl.send(b'HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n' + CORS +
-                            b'Content-Length: ' + str(len(err)).encode() +
-                            b'\r\nConnection: close\r\n\r\n' + err)
+                    _sendall(cl, b'HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n' + CORS +
+                             b'Content-Length: ' + str(len(err)).encode() +
+                             b'\r\nConnection: close\r\n\r\n' + err)
             else:
-                cl.send(b'HTTP/1.1 404 Not Found\r\n' + CORS +
-                        b'Content-Length: 0\r\nConnection: close\r\n\r\n')
+                _sendall(cl, b'HTTP/1.1 404 Not Found\r\n' + CORS +
+                         b'Content-Length: 0\r\nConnection: close\r\n\r\n')
         except Exception:
             pass
         finally:

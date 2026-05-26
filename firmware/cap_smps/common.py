@@ -26,11 +26,6 @@ except ImportError:
     WIFI_SSID = ""
     WIFI_PASS = ""
 
-try:
-    from wifi_config import BACKEND_URL as WIFI_BACKEND_URL
-except ImportError:
-    WIFI_BACKEND_URL = ""
-
 # ---------------- Tuning constants shared across all role files ----------------
 
 PWM_FREQ_HZ      = 100_000
@@ -162,6 +157,39 @@ CORS = (b'Access-Control-Allow-Origin: *\r\n'
         b'Access-Control-Allow-Headers: Content-Type\r\n')
 
 
+def _sendall(sock, data):
+    try:
+        sock.sendall(data)
+        return
+    except Exception:
+        pass
+    mv = memoryview(data)
+    sent = 0
+    while sent < len(data):
+        n = sock.send(mv[sent:])
+        if n is None or n <= 0:
+            break
+        sent += n
+
+
+def _serve_dashboard_html(sock):
+    # Stream file in chunks; avoids RAM spikes and truncated socket writes.
+    for p in ('dashboard.html', '/dashboard.html', 'index.html', '/index.html'):
+        try:
+            _sendall(sock, b'HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n' + CORS +
+                     b'Connection: close\r\n\r\n')
+            with open(p, 'rb') as f:
+                while True:
+                    chunk = f.read(1024)
+                    if not chunk:
+                        break
+                    _sendall(sock, chunk)
+            return True
+        except Exception:
+            pass
+    return False
+
+
 def _http_server(state, port):
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -187,11 +215,18 @@ def _http_server(state, port):
             if method == b'OPTIONS':
                 cl.send(b'HTTP/1.1 204 No Content\r\n' + CORS +
                         b'Content-Length: 0\r\nConnection: close\r\n\r\n')
+            elif method == b'GET' and (path == b'/' or path == b'/dashboard.html' or path == b'/index.html'):
+                if not _serve_dashboard_html(cl):
+                    body = (b'<html><body><h3>dashboard.html not found</h3>'
+                            b'<p>Upload dashboard.html to the Pico filesystem.</p></body></html>')
+                    _sendall(cl, b'HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n' + CORS +
+                             b'Content-Length: ' + str(len(body)).encode() +
+                             b'\r\nConnection: close\r\n\r\n' + body)
             elif method == b'GET' and path == b'/tlm':
                 body = json.dumps(state['tlm']).encode()
-                cl.send(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n' + CORS +
-                        b'Content-Length: ' + str(len(body)).encode() +
-                        b'\r\nConnection: close\r\n\r\n' + body)
+                _sendall(cl, b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n' + CORS +
+                         b'Content-Length: ' + str(len(body)).encode() +
+                         b'\r\nConnection: close\r\n\r\n' + body)
             elif method == b'POST' and path == b'/cmd':
                 idx = req.find(b'\r\n\r\n')
                 body = req[idx + 4:] if idx >= 0 else b''
@@ -200,18 +235,18 @@ def _http_server(state, port):
                     if isinstance(cmd, dict):
                         state['cmd'].update(cmd)
                         state['last_cmd_ms'] = time.ticks_ms()
-                        cl.send(b'HTTP/1.1 200 OK\r\n' + CORS +
-                                b'Content-Length: 2\r\nConnection: close\r\n\r\nOK')
+                        _sendall(cl, b'HTTP/1.1 200 OK\r\n' + CORS +
+                                 b'Content-Length: 2\r\nConnection: close\r\n\r\nOK')
                     else:
                         raise ValueError('not a JSON object')
                 except Exception as e:
                     err = ('{"err":"%s"}' % str(e)).encode()
-                    cl.send(b'HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n' + CORS +
-                            b'Content-Length: ' + str(len(err)).encode() +
-                            b'\r\nConnection: close\r\n\r\n' + err)
+                    _sendall(cl, b'HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n' + CORS +
+                             b'Content-Length: ' + str(len(err)).encode() +
+                             b'\r\nConnection: close\r\n\r\n' + err)
             else:
-                cl.send(b'HTTP/1.1 404 Not Found\r\n' + CORS +
-                        b'Content-Length: 0\r\nConnection: close\r\n\r\n')
+                _sendall(cl, b'HTTP/1.1 404 Not Found\r\n' + CORS +
+                         b'Content-Length: 0\r\nConnection: close\r\n\r\n')
         except Exception:
             pass
         finally:
@@ -231,218 +266,6 @@ def _http_server(state, port):
 def start_http_thread(state, port=80):
     state.setdefault('shutdown', False)
     _thread.start_new_thread(_http_server, (state, port))
-
-
-# ---------------- Peer telemetry publisher ----------------
-
-def post_json(host, port, path, payload, timeout_s=0.25):
-    body = json.dumps(payload).encode()
-    req = (b'POST ' + path.encode() + b' HTTP/1.1\r\n'
-           b'Host: ' + host.encode() + b'\r\n'
-           b'Content-Type: application/json\r\n'
-           b'Content-Length: ' + str(len(body)).encode() + b'\r\n'
-           b'Connection: close\r\n\r\n' + body)
-    s = socket.socket()
-    try:
-        s.settimeout(timeout_s)
-        s.connect((host, port))
-        s.send(req)
-        s.recv(64)
-    finally:
-        s.close()
-
-
-def _cap_peer_publisher(state, role, host, port, push_ms):
-    last_push = 0
-    while not state.get('shutdown', False):
-        now = time.ticks_ms()
-        if time.ticks_diff(now, last_push) >= push_ms:
-            tlm = state.get('tlm', None)
-            if tlm:
-                try:
-                    post_json(host, port, '/peer', {
-                        'role': role,
-                        'ts_ms': now,
-                        'tlm': tlm,
-                    })
-                except Exception:
-                    pass
-            last_push = now
-        time.sleep_ms(200)
-
-
-def start_cap_peer_publisher(state, role, host='192.168.4.1', port=8000, push_ms=1000):
-    _thread.start_new_thread(_cap_peer_publisher, (state, role, host, port, push_ms))
-
-
-# ---------------- Backend telemetry reporting ----------------
-
-def _connect_wifi_with_timeout(wlan, hostname, ssid, password, timeout_ms=12000):
-    if not ssid:
-        return False
-    wlan.active(True)
-    try:
-        wlan.config(hostname=hostname)
-    except (OSError, ValueError):
-        pass
-    try:
-        if wlan.isconnected():
-            wlan.disconnect()
-    except Exception:
-        pass
-    wlan.connect(ssid, password or "")
-    deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
-    while not wlan.isconnected() and time.ticks_diff(deadline, time.ticks_ms()) > 0:
-        time.sleep_ms(200)
-    return wlan.isconnected()
-
-
-def _parse_http_url(url):
-    if not url or not url.startswith('http://'):
-        return None, None, None
-    body = url[7:]
-    slash = body.find('/')
-    if slash >= 0:
-        host_port = body[:slash]
-        path = body[slash:]
-    else:
-        host_port = body
-        path = '/'
-    if ':' in host_port:
-        host, port_s = host_port.split(':', 1)
-        try:
-            port = int(port_s)
-        except Exception:
-            port = 80
-    else:
-        host = host_port
-        port = 80
-    return host, port, path
-
-
-def post_json_url(url, payload, timeout_s=1.5):
-    host, port, path = _parse_http_url(url)
-    if (not host) or (not path):
-        return False
-    body = json.dumps(payload).encode()
-    req = (b'POST ' + path.encode() + b' HTTP/1.1\r\n'
-           b'Host: ' + host.encode() + b'\r\n'
-           b'Content-Type: application/json\r\n'
-           b'Content-Length: ' + str(len(body)).encode() + b'\r\n'
-           b'Connection: close\r\n\r\n' + body)
-    s = socket.socket()
-    try:
-        s.settimeout(timeout_s)
-        s.connect((host, port))
-        s.send(req)
-        s.recv(96)
-        return True
-    except Exception:
-        return False
-    finally:
-        try:
-            s.close()
-        except Exception:
-            pass
-
-
-def _backend_reporter(state, role, hostname, default_ssid, default_pass,
-                      alternate_wifi, default_backend_url,
-                      on_connect, on_disconnect, post_ms):
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    tried_idx = 0
-    last_connected = wlan.isconnected()
-    prev_connect_wifi = False
-    connected_source = 'offline'
-
-    state['net_mode'] = 'offline'
-    state['wifi_connected'] = 1 if wlan.isconnected() else 0
-    state['backend_post_ok'] = 0
-
-    while not state.get('shutdown', False):
-        cmd = state.get('cmd', {})
-        dyn_ssid = str(cmd.get('wifi_ssid', '')).strip()
-        dyn_pass = str(cmd.get('wifi_password', ''))
-        backend_url = str(cmd.get('backend_url', default_backend_url or '')).strip()
-        connect_wifi = bool(cmd.get('connect_wifi', 0))
-        has_dyn_cfg = connect_wifi and bool(dyn_ssid)
-
-        candidates = []
-        if connect_wifi and not prev_connect_wifi:
-            try:
-                wlan.disconnect()
-            except Exception:
-                pass
-
-        if alternate_wifi and has_dyn_cfg and default_ssid:
-            candidates = [
-                ('backend_wifi', dyn_ssid, dyn_pass),
-                ('ap_wifi', default_ssid, default_pass or ''),
-            ]
-        elif has_dyn_cfg:
-            candidates = [('backend_wifi', dyn_ssid, dyn_pass)]
-        elif default_ssid:
-            candidates = [('ap_wifi', default_ssid, default_pass or '')]
-
-        prev_connect_wifi = connect_wifi
-
-        if not wlan.isconnected() and candidates:
-            label, ssid, passwd = candidates[tried_idx % len(candidates)]
-            tried_idx += 1
-            if _connect_wifi_with_timeout(wlan, hostname, ssid, passwd):
-                connected_source = label
-
-        now_connected = wlan.isconnected()
-        if not now_connected:
-            connected_source = 'offline'
-        elif connected_source == 'offline':
-            connected_source = 'backend_wifi' if has_dyn_cfg else 'ap_wifi'
-
-        if now_connected and not last_connected and on_connect:
-            try:
-                on_connect()
-            except Exception:
-                pass
-        elif (not now_connected) and last_connected and on_disconnect:
-            try:
-                on_disconnect()
-            except Exception:
-                pass
-        elif (not now_connected) and on_disconnect:
-            try:
-                on_disconnect()
-            except Exception:
-                pass
-        last_connected = now_connected
-
-        if now_connected:
-            net_mode = connected_source
-        else:
-            net_mode = 'ap_mode' if role == 'cap' else 'offline'
-
-        state['wifi_connected'] = 1 if now_connected else 0
-        state['net_mode'] = net_mode
-
-        post_ok = False
-        if now_connected and backend_url:
-            tlm = state.get('tlm', None)
-            if tlm:
-                post_ok = post_json_url(backend_url, tlm)
-        state['backend_post_ok'] = 1 if post_ok else 0
-
-        time.sleep_ms(post_ms)
-
-
-def start_backend_reporter(state, role, hostname,
-                           default_ssid=WIFI_SSID or '', default_pass=WIFI_PASS or '',
-                           alternate_wifi=False, default_backend_url=WIFI_BACKEND_URL,
-                           on_connect=None, on_disconnect=None, post_ms=1000):
-    _thread.start_new_thread(_backend_reporter, (
-        state, role, hostname, default_ssid, default_pass,
-        alternate_wifi, default_backend_url,
-        on_connect, on_disconnect, post_ms,
-    ))
 
 
 # ---------------- Watchdog ----------------
