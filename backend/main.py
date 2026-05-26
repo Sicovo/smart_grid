@@ -4,7 +4,8 @@ import threading
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import desc
-from db import SessionLocal, GridSnapshot, SMPSnapshot, init_db, save_smps_snapshot
+from db import (SessionLocal, GridSnapshot, SMPSnapshot, ModuleSnapshot,
+                init_db, save_smps_snapshot, save_module_snapshot)
 
 app = FastAPI()
 
@@ -154,11 +155,105 @@ def get_smps_snapshots(limit: int = 120):
 @app.post("/smps/ingest")
 async def ingest_smps(payload: dict):
     try:
-        save_smps_snapshot(payload)
+        if "role" in payload:
+            save_module_snapshot(payload)
+        else:
+            save_smps_snapshot(payload)
     except (KeyError, TypeError) as exc:
         from fastapi import HTTPException
         raise HTTPException(status_code=422, detail=str(exc))
     return {"ok": True}
+
+
+def _module_row_dict(row):
+    return {
+        "id":          row.id,
+        "timestamp":   row.timestamp.isoformat(),
+        "role":        row.role,
+        "trip":        row.trip,
+        "trip_reason": row.trip_reason,
+        "enable":      row.enable,
+        "wd":          row.wd,
+        "pwm":         row.pwm,
+        "vb_bus":      row.vb_bus,
+        "iL":          row.iL,
+        "i_ref":       row.i_ref,
+        "vb_target":   row.vb_target,
+        "v_panel":     row.v_panel,
+        "p_panel":     row.p_panel,
+        "vmpp_target": row.vmpp_target,
+        "mppt_mode":   row.mppt_mode,
+        "irradiance":  row.irradiance,
+        "web_tick":    row.web_tick,
+        "v_psu":       row.v_psu,
+        "p_import":    row.p_import,
+        "v_resistor":  row.v_resistor,
+        "p_dissip":    row.p_dissip,
+        "v_cap":       row.v_cap,
+        "p_cap":       row.p_cap,
+        "soc_pct":     row.soc_pct,
+        "energy_J":    row.energy_J,
+        "i_cmd":       row.i_cmd,
+        "i_cmd_eff":   row.i_cmd_eff,
+        "i_red":       row.i_red,
+        "i_yel":       row.i_yel,
+        "i_grn":       row.i_grn,
+        "v_red":       row.v_red,
+        "v_yel":       row.v_yel,
+        "v_grn":       row.v_grn,
+        "p_red":       row.p_red,
+        "p_yel":       row.p_yel,
+        "p_grn":       row.p_grn,
+        "v_ldr":       row.v_ldr,
+        "v_dark":      row.v_dark,
+        "v_full":      row.v_full,
+        "calibrated":  row.calibrated,
+    }
+
+
+@app.get("/modules/latest")
+def get_all_modules_latest():
+    db = SessionLocal()
+    result = {}
+    for role in ['pv', 'grid', 'export', 'cap', 'led', 'lux']:
+        row = (
+            db.query(ModuleSnapshot)
+            .filter(ModuleSnapshot.role == role)
+            .order_by(desc(ModuleSnapshot.id))
+            .first()
+        )
+        result[role] = _module_row_dict(row) if row else None
+    db.close()
+    return result
+
+
+@app.get("/modules/latest/{role}")
+def get_module_latest(role: str):
+    db = SessionLocal()
+    row = (
+        db.query(ModuleSnapshot)
+        .filter(ModuleSnapshot.role == role)
+        .order_by(desc(ModuleSnapshot.id))
+        .first()
+    )
+    db.close()
+    if row is None:
+        return {"error": f"No snapshots for role {role}"}
+    return _module_row_dict(row)
+
+
+@app.get("/modules/snapshots/{role}")
+def get_module_snapshots(role: str, limit: int = 60):
+    db = SessionLocal()
+    rows = (
+        db.query(ModuleSnapshot)
+        .filter(ModuleSnapshot.role == role)
+        .order_by(desc(ModuleSnapshot.id))
+        .limit(limit)
+        .all()
+    )
+    db.close()
+    return [_module_row_dict(r) for r in reversed(rows)]
 
 
 @app.get("/smps/latest")

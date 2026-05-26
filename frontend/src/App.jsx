@@ -10,6 +10,7 @@ import {
   BarChart,
   Bar
 } from "recharts";
+import SmpsModules from "./SmpsModules";
 import "./App.css";
 
 const API_BASE =
@@ -21,6 +22,7 @@ const PICO_API_BASE =
   "http://192.168.4.1:8000";
 
 function App() {
+  const [activeView, setActiveView] = useState('energy');
   const [latest, setLatest] = useState(null);
   const [snapshots, setSnapshots] = useState([]);
   const [smpsLatest, setSmpsLatest] = useState(null);
@@ -106,14 +108,24 @@ function App() {
         <div className="sidebar-brand">
           <span>🐙</span> Octopus
         </div>
+        <div className={`nav-item ${activeView === 'energy' ? 'active' : ''}`}
+             onClick={() => setActiveView('energy')}>⚡ My Energy</div>
+        <div className={`nav-item ${activeView === 'smps' ? 'active' : ''}`}
+             onClick={() => setActiveView('smps')}>🔌 SMPS Modules</div>
         <div className="nav-item">🏠 Home</div>
-        <div className="nav-item active">⚡ My Energy</div>
         <div className="nav-item">💳 Payments</div>
         <div className="nav-item">🐙 Octopus</div>
       </aside>
 
       {/* 主面板区 */}
       <main className="main-content">
+        {activeView === 'smps' ? (
+          <div className="dashboard-container" style={{ maxWidth: '100%' }}>
+            <h1 className="page-title">SMPS Modules</h1>
+            <p className="date-subtitle">Live telemetry from firmware modules. Commands sent directly to each module's HTTP server.</p>
+            <SmpsModules apiBase={API_BASE} />
+          </div>
+        ) : (
         <div className="dashboard-container">
           
           <h1 className="page-title">My energy insights</h1>
@@ -269,6 +281,7 @@ function App() {
           </section>
 
         </div>
+        )}
       </main>
     </div>
   );

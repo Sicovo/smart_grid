@@ -28,6 +28,21 @@ To start frontend, backend, and the poller together:
 .\run_windows_all.ps1
 ```
 
+## Optional Pico SMPS Source
+
+The poller does not query a Pico SMPS source unless `PICO_BASE_URL` is set.
+
+Examples:
+
+```powershell
+$env:PICO_BASE_URL="http://192.168.4.1:8000"
+python backend/poller.py
+```
+
+```bash
+PICO_BASE_URL=http://192.168.4.1:8000 python backend/poller.py
+```
+
 ## Access Over Wi-Fi
 
 The frontend dev server listens on your computer's LAN address, and the frontend calls the backend on the same host by default.
