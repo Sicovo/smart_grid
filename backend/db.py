@@ -1,4 +1,5 @@
-from sqlalchemy import create_engine, Column, Integer, Float, DateTime, String
+from sqlalchemy import create_engine, Column, Integer, Float, DateTime, String, UniqueConstraint
+
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 
@@ -12,9 +13,14 @@ Base = declarative_base()
 class GridSnapshot(Base):
     __tablename__ = "grid_snapshots"
 
+    __table_args__ = (
+        UniqueConstraint("day", "tick", name="unique_day_tick"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
+    day = Column(Integer)
     tick = Column(Integer)
     sun = Column(Float)
     buy_price = Column(Float)
@@ -127,7 +133,21 @@ def init_db():
 def save_snapshot(state):
     db = SessionLocal()
 
+    existing = (
+        db.query(GridSnapshot)
+        .filter(
+            GridSnapshot.day == state["day"],
+            GridSnapshot.tick == state["tick"],
+        )
+        .first()
+    )
+
+    if existing is not None:
+        db.close()
+        return False
+
     snapshot = GridSnapshot(
+        day=state["day"],
         tick=state["tick"],
         sun=state["sun"],
         buy_price=state["buy_price"],
@@ -139,6 +159,7 @@ def save_snapshot(state):
     db.commit()
     db.close()
 
+    return True
 
 def save_smps_snapshot(state):
     db = SessionLocal()

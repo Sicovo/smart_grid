@@ -28,6 +28,32 @@ function App() {
   const [smpsLatest, setSmpsLatest] = useState(null);
   const [smpsSnapshots, setSmpsSnapshots] = useState([]);
   const [smpsSource, setSmpsSource] = useState("backend");
+  const [picoRefreshing, setPicoRefreshing] = useState(false);
+  const [picoError, setPicoError] = useState(null);
+
+  async function fetchPicoSmps() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    try {
+      const [smpsLatestRes, smpsSnapshotsRes] = await Promise.all([
+        fetch(`${PICO_API_BASE}/smps/latest`, { signal: controller.signal }),
+        fetch(`${PICO_API_BASE}/smps/snapshots?limit=120`, { signal: controller.signal }),
+      ]);
+
+      if (!smpsLatestRes.ok || !smpsSnapshotsRes.ok) {
+        throw new Error("Pico API request failed");
+      }
+
+      const [smpsLatestData, smpsSnapshotsData] = await Promise.all([
+        smpsLatestRes.json(),
+        smpsSnapshotsRes.json(),
+      ]);
+
+      return { smpsLatestData, smpsSnapshotsData };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   async function fetchData() {
     try {
@@ -50,19 +76,9 @@ function App() {
       let source = "pico";
 
       try {
-        const [smpsLatestRes, smpsSnapshotsRes] = await Promise.all([
-          fetch(`${PICO_API_BASE}/smps/latest`),
-          fetch(`${PICO_API_BASE}/smps/snapshots?limit=120`),
-        ]);
-
-        if (!smpsLatestRes.ok || !smpsSnapshotsRes.ok) {
-          throw new Error("Pico API request failed");
-        }
-
-        [smpsLatestData, smpsSnapshotsData] = await Promise.all([
-          smpsLatestRes.json(),
-          smpsSnapshotsRes.json(),
-        ]);
+        const picoResult = await fetchPicoSmps();
+        smpsLatestData = picoResult.smpsLatestData;
+        smpsSnapshotsData = picoResult.smpsSnapshotsData;
       } catch (_err) {
         source = "backend";
         const [smpsLatestRes, smpsSnapshotsRes] = await Promise.all([
@@ -95,9 +111,26 @@ function App() {
     }
   }
 
+  async function refreshPicoNow() {
+    setPicoRefreshing(true);
+    setPicoError(null);
+    try {
+      const { smpsLatestData, smpsSnapshotsData } = await fetchPicoSmps();
+      setSmpsLatest(smpsLatestData?.error ? null : smpsLatestData);
+      setSmpsSnapshots(Array.isArray(smpsSnapshotsData) ? smpsSnapshotsData : []);
+      setSmpsSource("pico");
+    } catch (err) {
+      console.warn("Pico manual refresh failed", err);
+      setPicoError("无法直接访问 Pico，已回退到后端数据库");
+      setSmpsSource("backend");
+    } finally {
+      setPicoRefreshing(false);
+    }
+  }
+
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000);
+    const interval = setInterval(fetchData, 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -197,11 +230,22 @@ function App() {
               <div className="fiddlesticks">
                 <h2>Fiddlesticks!</h2>
                 <p>It looks like there aren't any live SMPS readings right now. Waiting for serial data on the backend.</p>
-                <button className="btn-pink">Go to latest readings</button>
+                <button className="btn-pink" onClick={refreshPicoNow} disabled={picoRefreshing}>
+                  {picoRefreshing ? 'Refreshing Pico…' : 'Refresh Pico from Pico board'}
+                </button>
+                {picoError && <p style={{ color: '#ff8e8e', marginTop: 12 }}>{picoError}</p>}
               </div>
             ) : (
               <div className="fiddlesticks">
-                <h2>SMPS is Live</h2>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h2>SMPS is Live</h2>
+                  <button className="btn-pink" onClick={refreshPicoNow} disabled={picoRefreshing}>
+                    {picoRefreshing ? 'Refreshing Pico…' : 'Refresh Pico'}
+                  </button>
+                </div>
+                <p style={{ fontSize: 14, color: '#a69ec4', marginBottom: 14 }}>
+                  Showing data from: {smpsSource === 'pico' ? 'Pico board' : 'backend DB'}
+                </p>
                 <div className="stats-row" style={{ flexWrap: 'wrap' }}>
                   <div className="stat-box" style={{minWidth: '45%'}}><p>Va</p><h3>{formatSmps(smpsLatest?.va)}</h3></div>
                   <div className="stat-box" style={{minWidth: '45%'}}><p>Vb</p><h3>{formatSmps(smpsLatest?.vb)}</h3></div>
