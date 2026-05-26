@@ -24,6 +24,7 @@ def build_grid_state():
         return None
 
     state = {
+        "day": demand["day"],
         "tick": demand["tick"],
         "sun": sun["sun"],
         "buy_price": price["buy_price"],
@@ -83,4 +84,4 @@ if __name__ == "__main__":
         except Exception as e:
             print("ERROR:", e)
 
-        time.sleep(5)
+        time.sleep(1)
