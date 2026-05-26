@@ -18,7 +18,7 @@
 #     vb_target = 0 (or enable = 0) forces the module fully idle, which is how
 #     a higher-level scheduler can hand the bus off entirely to export.
 
-import socket, json, _thread, time
+import time
 from machine import Pin, ADC, I2C, PWM, Timer
 from common import (PI, INA219, saturate, wifi_connect, start_http_thread,
                     watchdog_tripped, PWM_FREQ_HZ, PWM_MIN, PWM_MAX,

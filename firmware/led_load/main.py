@@ -21,7 +21,7 @@
 # Telemetry:  { role, trip, i_{red,yel,grn}, v_{red,yel,grn}, ir_{red,yel,grn}, d_{red,yel,grn} }
 # Commands:   { enable, p_red, p_yel, p_grn }
 
-import socket, json, _thread, time
+import time
 from machine import Pin, SPI, PWM, Timer
 from common import (PI, saturate, wifi_connect, start_http_thread,
                     watchdog_tripped, PWM_FREQ_HZ, TICK_HZ)

@@ -18,7 +18,7 @@
 #     i_ref_max acts as a max-dissipation cap, useful if your resistor or
 #     scheduler imposes one. Default 1.0 A (~10 W).
 
-import socket, json, _thread, time
+import time
 from machine import Pin, ADC, I2C, PWM, Timer
 from common import (PI, INA219, saturate, wifi_connect, start_http_thread,
                     watchdog_tripped, PWM_FREQ_HZ, PWM_MIN, PWM_MAX,
@@ -45,45 +45,6 @@ VB_TARGET_DEFAULT = 10.2   # bring-up: wide 1 V deadband with grid at 9.5
 KP_V, KI_V = 0.5, 5.0
 KP_I, KI_I = 100, 300
 I_REF_HI   = 1.0          # max dissipation current — adjust to your resistor's power rating
-CAP_SMPS_HOST = '192.168.4.1'
-CAP_SMPS_PORT = 8000
-PEER_PUSH_MS  = 1000
-
-
-def post_json(host, port, path, payload, timeout_s=0.25):
-    body = json.dumps(payload).encode()
-    req = (b'POST ' + path.encode() + b' HTTP/1.1\r\n'
-           b'Host: ' + host.encode() + b'\r\n'
-           b'Content-Type: application/json\r\n'
-           b'Content-Length: ' + str(len(body)).encode() + b'\r\n'
-           b'Connection: close\r\n\r\n' + body)
-    s = socket.socket()
-    try:
-        s.settimeout(timeout_s)
-        s.connect((host, port))
-        s.send(req)
-        s.recv(64)
-    finally:
-        s.close()
-
-
-def cap_peer_publisher(state):
-    last_push = 0
-    while not state.get('shutdown', False):
-        now = time.ticks_ms()
-        if time.ticks_diff(now, last_push) >= PEER_PUSH_MS:
-            tlm = state.get('tlm', None)
-            if tlm:
-                try:
-                    post_json(CAP_SMPS_HOST, CAP_SMPS_PORT, '/peer', {
-                        'role': 'export',
-                        'ts_ms': now,
-                        'tlm': tlm,
-                    })
-                except Exception:
-                    pass
-            last_push = now
-        time.sleep_ms(200)
 
 # ---------------- State ----------------
 
@@ -105,7 +66,6 @@ ina = INA219(ina_i2c)
 wlan = wifi_connect("export")
 print("WiFi:", wlan.ifconfig() if wlan.isconnected() else "NOT CONNECTED")
 start_http_thread(state)
-_thread.start_new_thread(cap_peer_publisher, (state,))
 
 # Tight integrator bounds == clamping anti-windup. Without them, the default
 # PI class lets integ run to ±10000, which at KI_V=5 is 50000x past the value

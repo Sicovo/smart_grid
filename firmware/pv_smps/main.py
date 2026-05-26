@@ -19,7 +19,7 @@
 #              mppt_mode, irradiance, web_tick }
 # Commands:  { enable, vmpp_target, reset_trip, mppt_mode }
 
-import socket, json, _thread, time
+import time
 from machine import Pin, ADC, I2C, PWM, Timer
 from common import wifi_connect, start_http_thread
 
