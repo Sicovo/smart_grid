@@ -171,7 +171,7 @@ print("Cap SMPS booting...")
 ina_init()
 pwm.duty_u16(PWM_MIN)
 wlan = wifi_connect("cap")
-print("WiFi:", wlan.ifconfig() if wlan.isconnected() else "NOT CONNECTED")
+print("Local IPv4:", wlan.ifconfig()[0] if wlan.isconnected() else "NOT CONNECTED")
 start_http_thread(state)
 
 loop_timer = Timer(mode=Timer.PERIODIC, freq=1000, callback=tick)

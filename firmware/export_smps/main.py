@@ -64,7 +64,7 @@ def tick(_t):
 print("Export SMPS booting...")
 ina = INA219(ina_i2c)
 wlan = wifi_connect("export")
-print("WiFi:", wlan.ifconfig() if wlan.isconnected() else "NOT CONNECTED")
+print("Local IPv4:", wlan.ifconfig()[0] if wlan.isconnected() else "NOT CONNECTED")
 start_http_thread(state)
 
 # Tight integrator bounds == clamping anti-windup. Without them, the default

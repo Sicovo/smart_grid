@@ -88,7 +88,7 @@ def tick(_t):
 
 print("LED load booting...")
 wlan = wifi_connect("led")
-print("WiFi:", wlan.ifconfig() if wlan.isconnected() else "NOT CONNECTED")
+print("Local IPv4:", wlan.ifconfig()[0] if wlan.isconnected() else "NOT CONNECTED")
 start_http_thread(state)
 
 # One PI per channel

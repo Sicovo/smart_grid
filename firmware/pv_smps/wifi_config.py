@@ -4,5 +4,5 @@
 # college WiFi is hard to use with embedded devices, so this is expected to
 # point at a phone hotspot.
 
-WIFI_SSID = "Dzuldiniy iPhone"
-WIFI_PASS = "triceratops"
+WIFI_SSID = "ABC"
+WIFI_PASS = "abc12346"
