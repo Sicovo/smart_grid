@@ -1,5 +1,5 @@
 from sqlalchemy import create_engine, Column, Integer, Float, DateTime, String, UniqueConstraint
-
+import json
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 
@@ -26,6 +26,7 @@ class GridSnapshot(Base):
     buy_price = Column(Float)
     sell_price = Column(Float)
     instant_demand = Column(Float)
+    deferables_json = Column(String)
 
 
 class SMPSnapshot(Base):
@@ -153,6 +154,7 @@ def save_snapshot(state):
         buy_price=state["buy_price"],
         sell_price=state["sell_price"],
         instant_demand=state["instant_demand"],
+        deferables_json=json.dumps(state.get("deferables", [])),
     )
 
     db.add(snapshot)

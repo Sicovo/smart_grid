@@ -90,6 +90,7 @@ def get_snapshots(limit: int = 50):
             "buy_price": row.buy_price,
             "sell_price": row.sell_price,
             "instant_demand": row.instant_demand,
+            "deferables": json.loads(row.deferables_json or "[]"),
         }
         for row in reversed(rows)
     ]
@@ -117,6 +118,7 @@ def get_latest():
         "buy_price": row.buy_price,
         "sell_price": row.sell_price,
         "instant_demand": row.instant_demand,
+        "deferables": json.loads(row.deferables_json or "[]"),
     }
 
 

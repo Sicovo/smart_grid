@@ -3,6 +3,7 @@ import time
 import requests
 from pprint import pprint
 from db import init_db, save_snapshot, save_smps_snapshot
+from concurrent.futures import ThreadPoolExecutor
 
 AZURE_BASE_URL = "https://icelec50015.azurewebsites.net"
 PICO_BASE_URL = os.getenv("PICO_BASE_URL", "").strip()
@@ -13,17 +14,22 @@ def get_json(url):
     r.raise_for_status()
     return r.json()
 
-def build_grid_state():
-    try:
-        sun = get_json(AZURE_BASE_URL + "/sun")
-        price = get_json(AZURE_BASE_URL + "/price")
-        demand = get_json(AZURE_BASE_URL + "/demand")
-        deferables = get_json(AZURE_BASE_URL + "/deferables")
-    except requests.RequestException as exc:
-        print("Grid source unavailable: {}".format(exc))
-        return None
+def build_grid_state_from_demand(demand):
+    urls = {
+        "sun": AZURE_BASE_URL + "/sun",
+        "price": AZURE_BASE_URL + "/price",
+        "deferables": AZURE_BASE_URL + "/deferables",
+    }
 
-    state = {
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        futures = {name: ex.submit(get_json, url) for name, url in urls.items()}
+        results = {name: fut.result() for name, fut in futures.items()}
+
+    sun = results["sun"]
+    price = results["price"]
+    deferables = results["deferables"]
+
+    return {
         "day": demand["day"],
         "tick": demand["tick"],
         "sun": sun["sun"],
@@ -32,9 +38,6 @@ def build_grid_state():
         "instant_demand": demand["demand"],
         "deferables": deferables,
     }
-
-    return state
-
 
 def fetch_smps_state():
     if not PICO_BASE_URL:
@@ -62,17 +65,28 @@ if __name__ == "__main__":
     else:
         print("SMPS polling disabled (set PICO_BASE_URL to enable)")
 
+    last_day = None
+    last_tick = None
+
     while True:
         try:
-            grid_state = build_grid_state()
-            if grid_state is not None:
-                save_snapshot(grid_state)
+            demand = get_json(AZURE_BASE_URL + "/demand")
 
-                print("\n=== SAVED GRID STATE ===")
-                pprint(grid_state)
+            day = demand["day"]
+            tick = demand["tick"]
+
+            if (day, tick) != (last_day, last_tick):
+                grid_state = build_grid_state_from_demand(demand)
+                saved = save_snapshot(grid_state)
+
+                if saved:
+                    print("\n=== SAVED GRID STATE ===")
+                    pprint(grid_state)
+
+                last_day, last_tick = day, tick
 
         except Exception as e:
-            print("ERROR:", e)
+            print("GRID ERROR:", e)
 
         try:
             smps_state = fetch_smps_state()
@@ -81,7 +95,8 @@ if __name__ == "__main__":
 
                 print("=== SAVED SMPS STATE ===")
                 pprint(smps_state)
+
         except Exception as e:
-            print("ERROR:", e)
+            print("SMPS ERROR:", e)
 
         time.sleep(1)

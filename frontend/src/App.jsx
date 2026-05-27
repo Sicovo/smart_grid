@@ -207,6 +207,41 @@ function App() {
               </ResponsiveContainer>
             </div>
 
+            <div className="card">
+            <h3>Deferrable Loads</h3>
+
+            {latest?.deferables?.length ? (
+              latest.deferables.map((job, idx) => {
+                const now = latest.tick;
+                const totalWindow = job.end - job.start;
+                const elapsed = Math.min(Math.max(now - job.start, 0), totalWindow);
+                const progress = totalWindow > 0 ? (elapsed / totalWindow) * 100 : 0;
+
+                return (
+                  <div key={idx} className="deferable-job">
+                    <div className="job-header">
+                      <span>Job {idx + 1}</span>
+                      <span>{job.energy.toFixed(1)} J</span>
+                    </div>
+
+                    <div className="job-meta">
+                      tick {job.start} → {job.end}
+                    </div>
+
+                    <div className="progress-bg">
+                      <div
+                        className="progress-fill"
+                        style={{ width: `${progress}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <p>No deferrable loads</p>
+            )}
+          </div>
+
             <div className="stats-row">
               <div className="stat-box">
                 <p>Current Demand</p>
