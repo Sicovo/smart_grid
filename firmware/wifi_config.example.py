@@ -6,3 +6,5 @@
 
 WIFI_SSID = "your-hotspot-ssid"
 WIFI_PASS = "your-hotspot-password"
+WIFI_SSID_ALT = "your-alt-hotspot-ssid"
+WIFI_PASS_ALT = "your-alt-hotspot-password"

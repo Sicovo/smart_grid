@@ -181,20 +181,14 @@
 <div class="sub">Polls every 1 s. PV module supports web-MPPT (fetches /sun from icelec50015 server).</div>
 
 <div class="top-center-actions">
-  <button id="backend-wifi-toggle" onclick="toggleBackendWifiFields()">WiFi setup</button>
-  <div id="backend-wifi-fields" style="display:none; margin-top:6px; padding:8px; background:var(--card); border:1px solid var(--border); text-align:left; max-width:760px; margin-left:auto; margin-right:auto;">
+  <button id="algorithm-control-toggle" onclick="toggleAlgorithmControlFields()">Algorithm Control</button>
+  <div id="algorithm-control-fields" style="display:none; margin-top:6px; padding:8px; background:var(--card); border:1px solid var(--border); text-align:left; max-width:760px; margin-left:auto; margin-right:auto;">
     <div class="row">
-      <label>WiFi SSID</label>
-      <input type="text" id="backend-wifi-ssid" value="" style="flex:1; background:#0d0d0d; color:var(--ink); border:1px solid var(--border); padding:4px 6px; font-family:inherit; font-size:12px;">
-    </div>
-    <div class="row">
-      <label>WiFi Password</label>
-      <input type="text" id="backend-wifi-pass" value="" style="flex:1; background:#0d0d0d; color:var(--ink); border:1px solid var(--border); padding:4px 6px; font-family:inherit; font-size:12px;">
-    </div>
-    <div class="row">
-      <label>Backend URL</label>
-      <input type="text" id="backend-wifi-backend" value="http://172.20.10.2:8000/smps/ingest" style="flex:1; background:#0d0d0d; color:var(--ink); border:1px solid var(--border); padding:4px 6px; font-family:inherit; font-size:12px;">
-      <button id="backend-wifi-send" onclick="sendBackendWifiSetup()">Send Setup</button>
+      <label>Global Control</label>
+      <div class="quickbar" style="margin-top:0">
+        <button id="algorithm-enable" onclick="sendAlgorithmControl(true)">Enable Algorithms</button>
+        <button id="algorithm-disable" class="danger" onclick="sendAlgorithmControl(false)">Disable Algorithms</button>
+      </div>
     </div>
   </div>
 </div>
@@ -241,11 +235,7 @@
 const MODULES = ['pv', 'grid', 'export', 'cap', 'lux', 'led'];
 const GAUGE_LO = 8.0, GAUGE_HI = 12.0;
 const GRID_TARGET_DEFAULT = 9.5, EXPORT_TARGET_DEFAULT = 10.5;
-const CAP_WIFI_DEFAULT = {
-  ssid: '',
-  password: '',
-  backendUrl: 'http://172.20.10.2:8000/smps/ingest'
-};
+const ALGORITHM_CONTROL_MODULES = ['pv', 'grid', 'export', 'cap', 'led'];
 
 let lastBusVoltage = null;
 
@@ -344,34 +334,21 @@ function loadHosts() {
   });
 }
 
-function toggleBackendWifiFields() {
-  const box = document.getElementById('backend-wifi-fields');
-  const btn = document.getElementById('backend-wifi-toggle');
+function toggleAlgorithmControlFields() {
+  const box = document.getElementById('algorithm-control-fields');
+  const btn = document.getElementById('algorithm-control-toggle');
   if (!box || !btn) return;
   const open = (box.style.display === 'none' || box.style.display === '');
   box.style.display = open ? 'block' : 'none';
-  btn.textContent = open ? 'Hide WiFi setup' : 'WiFi setup';
+  btn.textContent = open ? 'Hide Algorithm Control' : 'Algorithm Control';
 }
 
-async function sendBackendWifiSetup() {
-  const ssidEl = document.getElementById('backend-wifi-ssid');
-  const passEl = document.getElementById('backend-wifi-pass');
-  const backendEl = document.getElementById('backend-wifi-backend');
-  const ssid = ssidEl ? ssidEl.value.trim() : CAP_WIFI_DEFAULT.ssid;
-  const password = passEl ? passEl.value : CAP_WIFI_DEFAULT.password;
-  const backendUrl = backendEl ? backendEl.value.trim() : CAP_WIFI_DEFAULT.backendUrl;
-
-  const payload = {
-    wifi_ssid: ssid,
-    wifi_password: password,
-    backend_url: backendUrl,
-    connect_wifi: 1,
-  };
-  const targetModules = ['cap', 'pv', 'grid', 'export', 'led'];
-  const results = await Promise.all(targetModules.map(name => send(name, payload)));
+async function sendAlgorithmControl(enable) {
+  const payload = { enable: enable ? 1 : 0 };
+  const results = await Promise.all(ALGORITHM_CONTROL_MODULES.map(name => send(name, payload)));
   const ok = results.every(Boolean);
 
-  const btn = document.getElementById('backend-wifi-send');
+  const btn = document.getElementById(enable ? 'algorithm-enable' : 'algorithm-disable');
   if (!btn) return;
   const old = btn.textContent;
   btn.textContent = ok ? 'Sent ✓' : 'Failed';
@@ -442,10 +419,6 @@ function discoverPrefixes() {
     seed.push(getAutoHost(n));
   });
   seed.push(window.location && window.location.hostname ? window.location.hostname : '');
-  const backendInput = document.getElementById('backend-wifi-backend');
-  if (backendInput && backendInput.value) seed.push(backendInput.value);
-  const savedBackend = localStorage.getItem('backend-url');
-  if (savedBackend) seed.push(savedBackend);
   for (const s of seed) {
     const ip = parseIPv4(s);
     if (!ip) continue;
