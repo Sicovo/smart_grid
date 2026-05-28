@@ -603,6 +603,7 @@ function statsPV(d) {
     statCard('Bus voltage Va', d.vb_bus,      'V', 'bus',    2),
     statCard('Inductor iL',    d.iL,          'A', 'bus',    3),
     statCard('PV power',       d.p_panel,     'W', 'pwr-in', 2),
+    statCard('Ppv 3s avg',     d.p_avg3s,     'W', 'pwr-in', 3, 'resets on mode change'),
     statCard('i_ref',          d.i_ref,       'A', null,     3),
     statCard('Vmpp target',    d.vmpp_target, 'V', null,     2, vmppSub),
     statCard('MPPT mode',      modeUpper,     null,'sun',    0),
@@ -764,9 +765,11 @@ function setPVModeButtons(data) {
   const mode = (data && data.mppt_mode) || null;
   const fb = document.getElementById('pv-mode-fixed');
   const wb = document.getElementById('pv-mode-web');
-  if (!fb || !wb) return;
+  const pb = document.getElementById('pv-mode-po');
+  if (!fb || !wb || !pb) return;
   fb.classList.toggle('active', mode === 'fixed');
   wb.classList.toggle('active', mode === 'web');
+  pb.classList.toggle('active', mode === 'po');
 }
 
 function renderModule(name, data) {
@@ -858,6 +861,7 @@ function build() {
         <div class="seg">
           <button id="pv-mode-fixed" onclick="send('pv',{mppt_mode:'fixed'})">Fixed</button>
           <button id="pv-mode-web"   onclick="send('pv',{mppt_mode:'web'})">Web</button>
+          <button id="pv-mode-po"    onclick="send('pv',{mppt_mode:'po'})">P&amp;O</button>
         </div>
       </div>
       <div class="row">

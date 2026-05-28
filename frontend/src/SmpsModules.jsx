@@ -133,6 +133,7 @@ function PVStats({ d }) {
     <Stat label="Vbus (Va)"   val={d.vb_bus}      unit="V" />
     <Stat label="Inductor iL" val={d.iL}          unit="A" digits={3} />
     <Stat label="PV power"    val={d.p_panel}     unit="W" />
+    <Stat label="Ppv 3s avg"  val={d.p_avg3s}     unit="W" digits={3} />
     <Stat label="i_ref"       val={d.i_ref}       unit="A" digits={3} />
     <Stat label="Vmpp target" val={d.vmpp_target} unit="V" />
     <Stat label="MPPT mode"   val={d.mppt_mode ? d.mppt_mode.toUpperCase() : null} />
@@ -241,6 +242,7 @@ function PVControls({ d, onCmd }) {
     <CtrlRow label="MPPT mode">
       <Btn variant={mode === 'fixed' ? 'active' : ''} onClick={() => onCmd({ mppt_mode: 'fixed' })}>Fixed</Btn>
       <Btn variant={mode === 'web'   ? 'active' : ''} onClick={() => onCmd({ mppt_mode: 'web'   })}>Web</Btn>
+      <Btn variant={mode === 'po'    ? 'active' : ''} onClick={() => onCmd({ mppt_mode: 'po'    })}>P&amp;O</Btn>
     </CtrlRow>
     <CtrlRow label="Vmpp target">
       <input className="smps-num-input" type="number" value={vmpp} step="0.01" min="3" max="9"

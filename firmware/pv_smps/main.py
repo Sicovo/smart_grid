@@ -13,10 +13,20 @@
 #   'web'   → fetches /sun from icelec50015 every 5 s, maps irradiance → Vmpp
 #             via lookup table built from IV characterisation data.
 #             sun/tick values are exposed in telemetry for Group 3 logging.
+#   'po'    → Perturb & Observe. Steps vmpp_target by ±PO_STEP_V every
+#             PO_DWELL_MS; compares dwell-averaged P to last dwell. Filtered
+#             vb, iL feed the comparison so step decisions aren't driven by
+#             switching ripple / ADC noise. Outer voltage PI still tracks
+#             the commanded vmpp_target -- only the source of vmpp changes.
 #
-# Telemetry: { role, vb_bus, v_panel, iL, p_panel, i_ref, pwm,
+# Telemetry: { role, vb_bus, v_panel, iL, p_panel, p_avg3s, i_ref, pwm,
 #              trip, trip_reason, vmpp_target, enable, wd,
-#              mppt_mode, irradiance, web_tick }
+#              mppt_mode, irradiance, web_tick, po_dir, po_dp }
+#
+# p_avg3s is a true block average of p_panel over a 3-second window.
+# The window restarts whenever mppt_mode changes, so the displayed value
+# is always sourced from a single mode -- A/B'ing 'fixed' vs 'po' is just
+# "switch mode, wait 3 s, read the number".
 # Commands:  { enable, vmpp_target, reset_trip, mppt_mode }
 
 import time
@@ -35,7 +45,11 @@ i2c    = I2C(0, scl=Pin(1), sda=Pin(0), freq=2_400_000)
 ADDR, SHUNT = 0x40, 0.10
 
 def ina_init():
-    i2c.writeto_mem(ADDR, 0x00, b'\x1D\xDF')
+    # CONFIG was 0x1DDF (12-bit, 8-sample averaging on both ADCs ~4.3 ms).
+    # Bumped to 0x1E67 -> 16-sample averaging ~8.5 ms. Sits comfortably
+    # inside the 300 ms P&O dwell and visibly quietens iL, which is what
+    # makes the P&O power comparison repeatable.
+    i2c.writeto_mem(ADDR, 0x00, b'\x1E\x67')
     i2c.writeto_mem(ADDR, 0x05, b'\x00\x00')
 
 def ina_current():
@@ -47,10 +61,14 @@ def ina_current():
     return -(v * 1e-5) / SHUNT
 
 def read_va():
-    return 1.017 * (12490/2490) * 3.3 * va_pin.read_u16() / 65536
+    # 4x oversample -- Pico ADC LSB noise is the dominant noise source
+    # on Vb display. ~10 us extra inside a 1 ms tick budget.
+    s = va_pin.read_u16() + va_pin.read_u16() + va_pin.read_u16() + va_pin.read_u16()
+    return 1.017 * (12490/2490) * 3.3 * (s >> 2) / 65536
 
 def read_vb():
-    return 1.015 * (12490/2490) * 3.3 * vb_pin.read_u16() / 65536
+    s = vb_pin.read_u16() + vb_pin.read_u16() + vb_pin.read_u16() + vb_pin.read_u16()
+    return 1.015 * (12490/2490) * 3.3 * (s >> 2) / 65536
 
 def sat(x, hi, lo):
     return max(lo, min(hi, x))
@@ -134,6 +152,96 @@ _last_sun_fetch_ms  = 0
 _SUN_FETCH_INTERVAL = 5000  # ms — matches server tick rate
 
 # ============================================================
+# P&O MPPT
+#
+# Two-timescale design: the outer voltage PI keeps tracking the commanded
+# vmpp_target at 100 Hz; we only perturb that target every PO_DWELL_MS.
+# The perturbation cadence MUST be slower than the outer loop's settling
+# time -- otherwise the P measured at the end of a dwell reflects the PI
+# transient, not the true new operating point, and direction decisions
+# become noise.
+#
+# Power for the comparison is built in two stages: (1) EMA-filtered vb
+# and iL inside the 1 kHz tick, (2) accumulator over the last half of
+# each dwell. The EMA kills switching-ripple aliasing; the dwell average
+# kills whatever survives. Without both, |dP_noise| > |dP_curvature|
+# near the peak and the algorithm thrashes randomly.
+#
+# Dead zone (PO_DEAD_W) blocks direction *flips* when |dP| is below the
+# noise floor -- prevents the classic three-point oscillation degenerating
+# into noise-driven random walk. We still step every dwell so a sun
+# change still shows up as a non-zero dp on the next comparison.
+# ============================================================
+
+PO_STEP_V        = 0.03      # 30 mV perturbation per dwell
+PO_DWELL_MS      = 300       # outer PI has ~30 ticks of 100 Hz to settle
+PO_DEAD_W        = 0.02      # |dP| below this -> don't flip direction
+PO_VMPP_LO       = 5.0       # hard clamp -- never command below this
+PO_VMPP_HI       = 7.0       # hard clamp -- never command above this
+PO_AVG_TAIL_FRAC = 0.5       # average P only over last half of dwell
+
+# EMA on vb / iL for telemetry display + P&O input.
+# alpha=0.05 -> tau~20 ms at 1 kHz, fc~8 Hz. Settles in ~60 ms which
+# fits inside the 150 ms dwell-averaging tail.
+EMA_ALPHA = 0.05
+
+# P&O state — only touched from inside the 1 ms tick.
+_po_active      = False     # tracks mode transitions for reseed
+_po_vmpp        = VMPP_TARGET
+_po_dir         = +1        # +1 = stepping up, -1 = stepping down
+_po_last_p      = 0.0       # last dwell-averaged P
+_po_last_dp     = 0.0       # exposed in telemetry for debugging
+_po_psum        = 0.0       # accumulator for current dwell
+_po_psum_n      = 0
+_po_dwell_start = 0         # ticks_ms at start of current dwell
+
+def _po_reseed(initial_v):
+    """Reset P&O state. Called on mode entry to 'po' and on Reset Trip."""
+    global _po_vmpp, _po_dir, _po_last_p, _po_last_dp
+    global _po_psum, _po_psum_n, _po_dwell_start
+    _po_vmpp        = sat(initial_v, PO_VMPP_HI, PO_VMPP_LO)
+    _po_dir         = +1
+    _po_last_p      = 0.0
+    _po_last_dp     = 0.0
+    _po_psum        = 0.0
+    _po_psum_n      = 0
+    _po_dwell_start = time.ticks_ms()
+
+def _po_step(p_inst):
+    """One P&O tick. Accumulates p during the dwell tail, perturbs
+    vmpp at end of dwell. Returns currently commanded vmpp_target."""
+    global _po_vmpp, _po_dir, _po_last_p, _po_last_dp
+    global _po_psum, _po_psum_n, _po_dwell_start
+
+    now_ms        = time.ticks_ms()
+    dwell_elapsed = time.ticks_diff(now_ms, _po_dwell_start)
+
+    # Skip the early-dwell transient; only average once the outer PI
+    # has settled into the new operating point.
+    if dwell_elapsed > int(PO_DWELL_MS * PO_AVG_TAIL_FRAC):
+        _po_psum   += p_inst
+        _po_psum_n += 1
+
+    if dwell_elapsed >= PO_DWELL_MS:
+        p_now = (_po_psum / _po_psum_n) if _po_psum_n > 0 else p_inst
+        dp    = p_now - _po_last_p
+        _po_last_dp = dp
+
+        # Only flip on a clear decline. Improvement or dead-zone -> keep
+        # last direction; we still step so sun change is detected next dwell.
+        if dp < -PO_DEAD_W:
+            _po_dir = -_po_dir
+
+        _po_vmpp   = sat(_po_vmpp + _po_dir * PO_STEP_V, PO_VMPP_HI, PO_VMPP_LO)
+        _po_last_p = p_now
+
+        _po_psum        = 0.0
+        _po_psum_n      = 0
+        _po_dwell_start = now_ms
+
+    return _po_vmpp
+
+# ============================================================
 # Shared state (dashboard-compatible)
 # ============================================================
 
@@ -155,6 +263,23 @@ _outer_cnt   = 0
 _print_cnt   = 0
 _trip_active = 0
 _trip_reason = ''
+
+# Display + P&O power filter. Kept OUT of the inner PI path so the
+# original PI tuning is unchanged. Only telemetry p_panel and the P&O
+# dwell accumulator see filtered values.
+_vb_lp = 0.0
+_il_lp = 0.0
+_p_lp  = 0.0
+
+# 3-second block average of p_panel for MPPT mode A/B comparison.
+# Window restarts on mppt_mode change so each completed average reflects
+# a single mode's steady-state harvest.
+P_AVG_WINDOW_MS = 3000
+_pavg_sum   = 0.0
+_pavg_n     = 0
+_pavg_start = 0
+_p_avg3s    = 0.0
+_prev_mode  = None
 
 def _reset_controllers():
     global _v_err_int, _i_err_int, _i_ref, _pwm_out
@@ -189,7 +314,7 @@ start_http_thread(state)
 loop_timer = Timer(mode=Timer.PERIODIC, freq=1000, callback=tick)
 print("[pv] running. Ctrl+C to stop.")
 print("[pv] MPPT mode:", MPPT_MODE,
-      "-- send  pv mppt_mode web  from dashboard to enable web MPPT.")
+      "-- send  pv mppt_mode {web|po}  from dashboard to switch modes.")
 
 # ============================================================
 # Main loop
@@ -231,30 +356,76 @@ try:
         _il = ina_current()
         _va = read_va()
 
+        # EMA filter for telemetry display + P&O input.
+        # Kick filters with the first sample to avoid a 60 ms boot
+        # transient where p_panel ramps from 0 up to true value.
+        if _vb_lp == 0.0:
+            _vb_lp = _vb
+            _il_lp = _il
+        else:
+            _vb_lp = (1.0 - EMA_ALPHA) * _vb_lp + EMA_ALPHA * _vb
+            _il_lp = (1.0 - EMA_ALPHA) * _il_lp + EMA_ALPHA * _il
+        _p_lp = _vb_lp * _il_lp
+
         cmd     = state['cmd']
         enabled = bool(cmd.get('enable', 1))
 
         # Decide vmpp_target based on active mode.
         # 'web'   -> irradiance from server -> lookup table
+        # 'po'    -> Perturb & Observe (slow outer search, dead-zone'd)
         # 'fixed' -> cmd override or hardcoded 6.23 V (original behaviour)
         mode = cmd.get('mppt_mode', MPPT_MODE)
+
+        # Reseed P&O on transition INTO 'po' so a stale _po_vmpp from
+        # minutes ago doesn't dump us at the wrong operating point. Seed
+        # from the current fixed-mode vmpp_target so switching from
+        # 'fixed' continues at whatever the user was last running.
+        if mode == 'po' and not _po_active:
+            _po_reseed(cmd.get('vmpp_target', VMPP_TARGET))
+            _po_active = True
+        elif mode != 'po' and _po_active:
+            _po_active = False
+
         if mode == 'web':
             vmp_target = vmpp_from_irradiance(_web_irradiance)
+        elif mode == 'po':
+            vmp_target = _po_step(_p_lp)
         else:
             vmp_target = cmd.get('vmpp_target', VMPP_TARGET)
 
-        # Dashboard reset button (no latch, but kick PIs)
+        # ---- 3-second block average of p_panel (for mode A/B testing) ----
+        # Restart the window on mode change so the average never mixes modes.
+        now_ms_pavg = time.ticks_ms()
+        if mode != _prev_mode:
+            _pavg_sum   = 0.0
+            _pavg_n     = 0
+            _pavg_start = now_ms_pavg
+            _prev_mode  = mode
+        _pavg_sum += _p_lp
+        _pavg_n   += 1
+        if time.ticks_diff(now_ms_pavg, _pavg_start) >= P_AVG_WINDOW_MS:
+            _p_avg3s    = _pavg_sum / _pavg_n
+            _pavg_sum   = 0.0
+            _pavg_n     = 0
+            _pavg_start = now_ms_pavg
+
+        # Dashboard reset button (no latch, but kick PIs and reseed P&O)
         if cmd.get('reset_trip', 0):
             cmd['reset_trip'] = 0
             _reset_controllers()
+            _po_reseed(cmd.get('vmpp_target', VMPP_TARGET))
 
         # ---- Telemetry (every tick) ----
+        # v_panel / iL / p_panel report the EMA-filtered values so the
+        # dashboard sees a calm signal rather than per-sample switching
+        # ripple aliasing. Inner PI and safety guards still see raw.
         state['tlm'] = {
             'role':        'pv',
             'vb_bus':      _va,
-            'v_panel':     _vb,
-            'iL':          _il,
-            'p_panel':     _vb * _il,
+            'v_panel':     _vb_lp,
+            'iL':          _il_lp,
+            'p_panel':     _p_lp,
+            'p_avg3s':     _p_avg3s,
             'i_ref':       _i_ref,
             'vmpp_target': vmp_target,
             'pwm':         int(_pwm_out),
@@ -266,6 +437,9 @@ try:
             'mppt_mode':   mode,
             'irradiance':  _web_irradiance,
             'web_tick':    _web_tick,
+            # P&O extras (only meaningful while mode == 'po')
+            'po_dir':      _po_dir,
+            'po_dp':       _po_last_dp,
         }
 
         # ---- Safety guards (non-latching; auto-recover) ----
@@ -324,10 +498,12 @@ try:
         if _print_cnt >= 500:
             _print_cnt = 0
             print('[pv] Va={:.2f} Vb={:.3f} iL={:+.3f} P={:+.2f}W '
-                  'iref={:.3f} pwm={} mode={} irr={:.2f} vmpp_tgt={:.3f}'
-                  .format(_va, _vb, _il, _vb * _il,
+                  'iref={:.3f} pwm={} mode={} irr={:.2f} vmpp_tgt={:.3f} '
+                  'po_dir={:+d} po_dp={:+.3f}'
+                  .format(_va, _vb_lp, _il_lp, _p_lp,
                           _i_ref, int(_pwm_out), mode,
-                          _web_irradiance, vmp_target))
+                          _web_irradiance, vmp_target,
+                          _po_dir, _po_last_dp))
 
 except KeyboardInterrupt:
     print("\n[pv] interrupted -- entering safe state...")
