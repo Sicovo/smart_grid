@@ -10,11 +10,11 @@ REQUEST_TIMEOUT = float(os.getenv("POLL_REQUEST_TIMEOUT", "5"))
 MODULE_POLL_INTERVAL = float(os.getenv("MODULE_POLL_INTERVAL", "1"))
 
 PICO_MODULE_URLS = {
-    # "pv": "http://192.168.137.21",
-    # "grid": "http://192.168.137.22",
-    # "cap": "http://192.168.137.23",
+    "pv": "http://192.168.137.21",
+    "grid": "http://192.168.137.22",
+    "cap": "http://192.168.137.23",
     "led": "http://192.168.137.24",
-    # "export": "http://192.168.137.25",
+    "export": "http://192.168.137.25",
 }
 MODULE_ROLES = [role for role, url in PICO_MODULE_URLS.items() if url]
 

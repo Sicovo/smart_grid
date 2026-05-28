@@ -21,12 +21,14 @@ from machine import Pin, ADC, I2C
 
 # Pull WiFi creds from a separate file so they don't get committed.
 try:
-    from wifi_config import WIFI_SSID, WIFI_PASS, WIFI_SSID_ALT, WIFI_PASS_ALT
+    from wifi_config import WIFI_SSID, WIFI_PASS, STATIC_IP, SUBNET, GATEWAY, DNS
 except ImportError:
     WIFI_SSID = ""
     WIFI_PASS = ""
-    WIFI_SSID_ALT = ""
-    WIFI_PASS_ALT = ""
+    STATIC_IP = None
+    SUBNET = "255.255.255.0"
+    GATEWAY = "192.168.137.1"
+    DNS = "192.168.137.1"
 
 # ---------------- Tuning constants shared across all role files ----------------
 
@@ -120,45 +122,25 @@ class INA219:
 
 # ---------------- WiFi ----------------
 
-def wifi_connect(hostname, timeout_ms=10000):
-    """Connect to WiFi using primary then alternate credentials from
-    wifi_config.py. Returns the WLAN object whether or not the connection
-    succeeded — caller should check .isconnected(). Failure is non-fatal:
-    control loop runs regardless."""
+def wifi_connect(hostname, timeout_ms=15000):
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+
+    if STATIC_IP:
+        wlan.ifconfig((STATIC_IP, SUBNET, GATEWAY, DNS))
+
     try:
         wlan.config(hostname=hostname)
     except (OSError, ValueError):
-        pass  # older firmware doesn't support setting hostname
+        pass
 
-    creds = []
-    if WIFI_SSID:
-        creds.append((WIFI_SSID, WIFI_PASS))
-    if WIFI_SSID_ALT and (WIFI_SSID_ALT, WIFI_PASS_ALT) not in creds:
-        creds.append((WIFI_SSID_ALT, WIFI_PASS_ALT))
+    wlan.connect(WIFI_SSID, WIFI_PASS)
 
-    if not creds:
-        return wlan
+    deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
+    while not wlan.isconnected() and time.ticks_diff(deadline, time.ticks_ms()) > 0:
+        time.sleep_ms(200)
 
-    budget_ms = max(timeout_ms, 0)
-    per_try_ms = budget_ms // len(creds) if creds else 0
-    remainder_ms = budget_ms % len(creds) if creds else 0
-
-    for idx, (ssid, password) in enumerate(creds):
-        try_ms = per_try_ms + (remainder_ms if idx == len(creds) - 1 else 0)
-        try:
-            wlan.disconnect()
-        except Exception:
-            pass
-        wlan.connect(ssid, password)
-        deadline = time.ticks_add(time.ticks_ms(), try_ms)
-        while not wlan.isconnected() and time.ticks_diff(deadline, time.ticks_ms()) > 0:
-            time.sleep_ms(200)
-        if wlan.isconnected():
-            break
     return wlan
-
 
 # ---------------- HTTP server (runs on core 1) ----------------
 #

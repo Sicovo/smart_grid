@@ -4,7 +4,10 @@
 # college WiFi is hard to use with embedded devices, so this is expected to
 # point at a phone hotspot.
 
-WIFI_SSID = "ABC"
-WIFI_PASS = "abc12346"
-WIFI_SSID_ALT = "HongZhe"
-WIFI_PASS_ALT = "999999999"
+WIFI_SSID = "PICO_AP"
+WIFI_PASS = "12345688"
+
+STATIC_IP = "192.168.137.21"
+SUBNET = "255.255.255.0"
+GATEWAY = "192.168.137.1"
+DNS = "192.168.137.1"

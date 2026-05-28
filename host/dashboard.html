@@ -6,7 +6,7 @@
 <title>Smart Grid Dashboard (CW PV)</title>
 <style>
   :root {
-    --bg: #131313; --panel: #1e1e1e; --card: #181818;
+    --bg: #020101; --panel: #1e1e1e; --card: #181818;
     --border: #2c2c2c; --border-bright: #3a3a3a;
     --ink: #e6e6e6; --dim: #888; --dimmer: #555;
     --ok: #6fb86f; --warn: #d9a85a; --err: #d96a6a;
@@ -455,40 +455,40 @@ async function runConcurrent(items, limit, worker) {
   await Promise.all(runners);
 }
 
-async function autoDiscoverMissing(missingNames) {
-  const now = Date.now();
-  if (AUTO_DISCOVERY.running) return;
-  if (now - AUTO_DISCOVERY.lastStartMs < AUTO_DISCOVERY.cooldownMs) return;
-  if (!missingNames || !missingNames.length) return;
+// async function autoDiscoverMissing(missingNames) {
+//   const now = Date.now();
+//   if (AUTO_DISCOVERY.running) return;
+//   if (now - AUTO_DISCOVERY.lastStartMs < AUTO_DISCOVERY.cooldownMs) return;
+//   if (!missingNames || !missingNames.length) return;
 
-  AUTO_DISCOVERY.running = true;
-  AUTO_DISCOVERY.lastStartMs = now;
-  const wanted = new Set(missingNames.filter(shouldAutoDiscover));
+//   AUTO_DISCOVERY.running = true;
+//   AUTO_DISCOVERY.lastStartMs = now;
+//   const wanted = new Set(missingNames.filter(shouldAutoDiscover));
 
-  try {
-    if (!wanted.size) return;
-    const prefixes = discoverPrefixes();
-    const candidates = discoveryCandidates(prefixes);
+//   try {
+//     if (!wanted.size) return;
+//     const prefixes = discoverPrefixes();
+//     const candidates = discoveryCandidates(prefixes);
 
-    await runConcurrent(candidates, AUTO_DISCOVERY.maxConcurrent, async base => {
-      if (!wanted.size) return;
-      try {
-        const r = await fetch(base + '/tlm', {
-          cache: 'no-store',
-          signal: AbortSignal.timeout(AUTO_DISCOVERY.timeoutMs),
-        });
-        if (!r.ok) return;
-        const data = await r.json();
-        const mod = moduleFromTlm(data);
-        if (!mod || !wanted.has(mod)) return;
-        setAutoHost(mod, hostFromUrl(base) || base);
-        wanted.delete(mod);
-      } catch (_e) { }
-    });
-  } finally {
-    AUTO_DISCOVERY.running = false;
-  }
-}
+//     await runConcurrent(candidates, AUTO_DISCOVERY.maxConcurrent, async base => {
+//       if (!wanted.size) return;
+//       try {
+//         const r = await fetch(base + '/tlm', {
+//           cache: 'no-store',
+//           signal: AbortSignal.timeout(AUTO_DISCOVERY.timeoutMs),
+//         });
+//         if (!r.ok) return;
+//         const data = await r.json();
+//         const mod = moduleFromTlm(data);
+//         if (!mod || !wanted.has(mod)) return;
+//         setAutoHost(mod, hostFromUrl(base) || base);
+//         wanted.delete(mod);
+//       } catch (_e) { }
+//     });
+//   } finally {
+//     AUTO_DISCOVERY.running = false;
+//   }
+// }
 
 function normalizeHost(raw) {
   let h = (raw || '').trim();
@@ -1215,8 +1215,8 @@ function drawModuleChart(name) {
 async function tick() {
   const results = {};
   await Promise.all(MODULES.map(async n => { results[n] = await poll(n); }));
-  const missing = MODULES.filter(n => !results[n]);
-  if (missing.length) autoDiscoverMissing(missing);
+  // const missing = MODULES.filter(n => !results[n]);
+  // if (missing.length) autoDiscoverMissing(missing);
   renderGauge(results);
   MODULES.forEach(n => renderModule(n, results[n]));
   recordSample(results);
