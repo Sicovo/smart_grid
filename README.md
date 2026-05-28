@@ -26,6 +26,14 @@ To start frontend, backend, and the poller together:
 
 ```powershell
 .\run_windows_all.ps1
+
+
+netsh wlan set hostednetwork mode=disallow
+net stop WlanSvc
+net start WlanSvc
+netsh wlan set hostednetwork mode=allow ssid=PICO_AP key=12345688
+netsh wlan start hostednetwork
+
 ```
 
 ## Module telemetry ingestion
