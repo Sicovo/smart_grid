@@ -82,7 +82,8 @@ function App() {
     <div className="app-layout">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <span>🐙</span> Octopus
+          <img src="/octopus.png" alt="octopus" className="logo" />
+          <span>Octopus</span>
         </div>
         <div
           className={`nav-item ${activeView === "energy" ? "active" : ""}`}
