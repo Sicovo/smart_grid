@@ -4,8 +4,8 @@ import threading
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import desc
-from db import (SessionLocal, GridSnapshot, SMPSnapshot, ModuleSnapshot,
-                init_db, save_smps_snapshot, save_module_snapshot)
+from db import (SessionLocal, GridSnapshot, ModuleSnapshot,
+                init_db, save_module_snapshot)
 
 app = FastAPI()
 
@@ -41,7 +41,10 @@ def start_smps_serial_ingest():
                             continue
                         try:
                             payload = json.loads(line)
-                            save_smps_snapshot(payload)
+                            if "role" in payload:
+                                save_module_snapshot(payload)
+                            else:
+                                print("SMPS ingest ignored: payload missing role")
                         except (ValueError, KeyError, TypeError):
                             continue
             except Exception as exc:
@@ -122,45 +125,13 @@ def get_latest():
     }
 
 
-@app.get("/smps/snapshots")
-def get_smps_snapshots(limit: int = 120):
-    db = SessionLocal()
-
-    rows = (
-        db.query(SMPSnapshot)
-        .order_by(desc(SMPSnapshot.id))
-        .limit(limit)
-        .all()
-    )
-
-    db.close()
-
-    return [
-        {
-            "id": row.id,
-            "timestamp": row.timestamp.isoformat(),
-            "va": row.va,
-            "vb": row.vb,
-            "vpot": row.vpot,
-            "iL": row.iL,
-            "OC": row.OC,
-            "CL": row.CL,
-            "BU": row.BU,
-            "duty": row.duty,
-            "i_err": row.i_err,
-            "i_ref": row.i_ref,
-        }
-        for row in reversed(rows)
-    ]
-
-
 @app.post("/smps/ingest")
 async def ingest_smps(payload: dict):
     try:
         if "role" in payload:
             save_module_snapshot(payload)
         else:
-            save_smps_snapshot(payload)
+            raise KeyError("Missing role field")
     except (KeyError, TypeError) as exc:
         from fastapi import HTTPException
         raise HTTPException(status_code=422, detail=str(exc))
@@ -258,32 +229,3 @@ def get_module_snapshots(role: str, limit: int = 60):
     return [_module_row_dict(r) for r in reversed(rows)]
 
 
-@app.get("/smps/latest")
-def get_smps_latest():
-    db = SessionLocal()
-
-    row = (
-        db.query(SMPSnapshot)
-        .order_by(desc(SMPSnapshot.id))
-        .first()
-    )
-
-    db.close()
-
-    if row is None:
-        return {"error": "No SMPS snapshots yet"}
-
-    return {
-        "id": row.id,
-        "timestamp": row.timestamp.isoformat(),
-        "va": row.va,
-        "vb": row.vb,
-        "vpot": row.vpot,
-        "iL": row.iL,
-        "OC": row.OC,
-        "CL": row.CL,
-        "BU": row.BU,
-        "duty": row.duty,
-        "i_err": row.i_err,
-        "i_ref": row.i_ref,
-    }

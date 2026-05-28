@@ -28,20 +28,24 @@ To start frontend, backend, and the poller together:
 .\run_windows_all.ps1
 ```
 
-## Optional Pico SMPS Source
+## Module telemetry ingestion
 
-The poller does not query a Pico SMPS source unless `PICO_BASE_URL` is set.
+The poller now collects grid demand data from the external simulation source and can also poll individual Pico firmware boards for telemetry.
 
-Examples:
+Set board URLs with environment variables before running `backend/poller.py`:
 
-```powershell
-$env:PICO_BASE_URL="http://192.168.4.1:8000"
+```bash
+PICO_PV_URL=http://192.168.4.2:80 \
+PICO_GRID_URL=http://192.168.4.3:80 \
+PICO_EXPORT_URL=http://192.168.4.4:80 \
+PICO_CAP_URL=http://192.168.4.5:80 \
+PICO_LED_URL=http://192.168.4.6:80 \
 python backend/poller.py
 ```
 
-```bash
-PICO_BASE_URL=http://192.168.4.1:8000 python backend/poller.py
-```
+The poller fetches `/tlm` from each configured board and stores the telemetry in the `module_snapshots` table via `save_module_snapshot()`.
+
+Board telemetry can also still be sent manually to the backend via `/smps/ingest`.
 
 ## Access Over Wi-Fi
 

@@ -29,23 +29,6 @@ class GridSnapshot(Base):
     deferables_json = Column(String)
 
 
-class SMPSnapshot(Base):
-    __tablename__ = "smps_snapshots"
-
-    id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=datetime.utcnow)
-
-    va = Column(Float)
-    vb = Column(Float)
-    vpot = Column(Float)
-    iL = Column(Float)
-    OC = Column(Integer)
-    CL = Column(Integer)
-    BU = Column(Integer)
-    duty = Column(Integer)
-    i_err = Column(Float)
-    i_ref = Column(Float)
-
 class ModuleSnapshot(Base):
     """Per-role telemetry from firmware modules (pv, grid, export, cap, led, lux)."""
     __tablename__ = "module_snapshots"
@@ -162,27 +145,6 @@ def save_snapshot(state):
     db.close()
 
     return True
-
-def save_smps_snapshot(state):
-    db = SessionLocal()
-
-    snapshot = SMPSnapshot(
-        va=state["va"],
-        vb=state["vb"],
-        vpot=state["vpot"],
-        iL=state["iL"],
-        OC=state["OC"],
-        CL=state["CL"],
-        BU=state["BU"],
-        duty=state["duty"],
-        i_err=state["i_err"],
-        i_ref=state["i_ref"],
-    )
-
-    db.add(snapshot)
-    db.commit()
-    db.close()
-
 
 def save_module_snapshot(payload):
     """Store one telemetry frame from any firmware module (identified by role)."""
