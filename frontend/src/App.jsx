@@ -79,36 +79,75 @@ function App() {
   }, []);
 
   return (
-    <div className="app-layout">
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <img src="/octopus.png" alt="octopus" className="logo" />
-          <span>Octopus</span>
-        </div>
-        <div
-          className={`nav-item ${activeView === "energy" ? "active" : ""}`}
-          onClick={() => setActiveView("energy")}
-        >
-          ⚡ My Energy
-        </div>
-        <div
-          className={`nav-item ${activeView === "smps-overview" ? "active" : ""}`}
-          onClick={() => setActiveView("smps-overview")}
-        >
-          📈 SMPS Overview
-        </div>
-        <div
-          className={`nav-item ${activeView === "smps" ? "active" : ""}`}
-          onClick={() => setActiveView("smps")}
-        >
-          🔌 SMPS Modules
-        </div>
-        <div className="nav-item">🏠 Home</div>
-        <div className="nav-item">💳 Payments</div>
-        <div className="nav-item">🐙 Octopus</div>
-      </aside>
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="topbar-inner">
+          <button
+            className="topbar-logo"
+            onClick={() => setActiveView("energy")}
+            aria-label="Home"
+          >
+            <img
+              src="/oct.png"
+              alt="Octopus"
+              className="topbar-logo-img"
+            />
+          </button>
+          <nav className="topbar-nav">
+            <button className="topbar-link">Energy</button>
+            <button className="topbar-link">Heat pumps</button>
+            <button className="topbar-link">Solar & battery</button>
+            <button className="topbar-link">Electric vehicles</button>
+          </nav>
 
-      <main className="main-content">
+          <div className="topbar-spacer" />
+
+          <button className="topbar-link topbar-support">Support</button>
+          <div className="topbar-user">
+            <span>Watt's Up</span>
+            <span className="topbar-avatar">F</span>
+          </div>
+        </div>
+      </header>
+
+      <div className="app-layout">
+        <aside className="sidebar">
+          <div
+            className={`nav-item ${activeView === "energy" ? "active" : ""}`}
+            onClick={() => setActiveView("energy")}
+          >
+            <span className="nav-icon">🏠</span>
+            <span>Home</span>
+          </div>
+          <div
+            className={`nav-item ${activeView === "smps-overview" ? "active" : ""}`}
+            onClick={() => setActiveView("smps-overview")}
+          >
+            <span className="nav-icon">📈</span>
+            <span>SMPS Overview</span>
+          </div>
+          <div
+            className={`nav-item ${activeView === "smps" ? "active" : ""}`}
+            onClick={() => setActiveView("smps")}
+          >
+            <span className="nav-icon">🔌</span>
+            <span>SMPS Modules</span>
+          </div>
+          <div className="nav-item">
+            <span className="nav-icon">⚡</span>
+            <span>My Energy</span>
+          </div>
+          <div className="nav-item">
+            <span className="nav-icon">💳</span>
+            <span>Payments</span>
+          </div>
+          <div className="nav-item">
+            <span className="nav-icon">🐙</span>
+            <span>Octoplus</span>
+          </div>
+        </aside>
+
+        <main className="main-content">
         {activeView === "smps" ? (
           <div className="dashboard-container" style={{ maxWidth: "100%" }}>
             <h1 className="page-title">SMPS Modules</h1>
@@ -348,7 +387,8 @@ function App() {
             </section>
           </div>
         )}
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

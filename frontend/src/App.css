@@ -5,75 +5,61 @@
 body {
   margin: 0;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background-color: #0b001a; /* Octopus 深紫色背景 */
+  background-color: #0E032E; /* Octopus 深紫色背景 */
   color: #ffffff;
-}
-
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.logo {
-  width: 28px;
-  height: 28px;
-  object-fit: contain;
 }
 
 /* 页面整体布局：侧边栏 + 主内容区 */
 .app-layout {
-  display: flex;
-  min-height: 100vh;
+  min-height: calc(100vh - 56px);
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 24px;
+  box-sizing: border-box;
 }
 
 /* 侧边栏模拟 */
 .sidebar {
-  width: 240px;
-  padding: 40px 20px;
+  position: sticky;
+  top: 56px;
+  align-self: start;
+  width: auto;
+  border-right: 0;
+  padding: 40px 12px 20px;
+  gap: 14px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  border-right: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.sidebar-brand {
-  margin-bottom: 40px;
-  padding-left: 20px;
-  display: flex;
   align-items: center;
-  gap: 12px;
-  font-weight: bold;
-  font-size: 18px;
-}
-
-.sidebar-brand span {
-  font-size: 24px;
+  background: transparent;
+  z-index: 10;
 }
 
 .nav-item {
+  min-height: 50px;
+  width: min(220px, 100%);
+  padding: 0 18px;
+  border-radius: 14px;
+  color: white;
+  font-size: 17px;
+  font-weight: 800;
+  gap: 10px;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 12px 20px;
-  border-radius: 12px;
-  color: #a69ec4;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .nav-item.active {
-  background-color: #1b44ff; /* 标志性的高亮蓝 */
+  background: #5b4df6;
   color: white;
 }
 
-/* 主内容区 */
 .main-content {
-  flex: 1;
-  padding: 40px;
-  display: flex;
-  justify-content: center;
+  padding: 52px 0 70px 28px;
 }
 
 .dashboard-container {
@@ -426,22 +412,6 @@ body {
 
 /* 响应式 */
 @media (max-width: 900px) {
-  .app-layout {
-    flex-direction: column;
-  }
-  .sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
-    flex-direction: row;
-    padding: 20px;
-    overflow-x: auto;
-  }
-  .sidebar-brand { margin: 0; }
-  .main-content {
-    padding: 20px;
-  }
-
   .naive-grid {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
@@ -1042,4 +1012,104 @@ body {
   .smps-overview-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: transparent;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 50;
+  height: 56px;
+  background: #10002f;
+}
+
+.topbar-inner {
+  width: 100%;
+  max-width: 1180px;
+  height: 100%;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  box-sizing: border-box;
+}
+
+.topbar-logo {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 0;
+}
+
+.topbar-logo-img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  display: block;
+}
+
+.topbar-nav {
+  display: flex;
+  gap: 34px;
+}
+
+.topbar-link {
+  border: 0;
+  background: transparent;
+  color: white;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+}
+
+.topbar-avatar {
+  width: 19px;
+  height: 19px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #635bff;
+  font-size: 11px;
+}
+
+.card,
+.insight-card,
+.smps-card,
+.smps-host-panel,
+.smps-plot-card {
+  background: #19064a;
+  border: 0;
+  border-radius: 11px;
+}
+
+.stat-box,
+.deferable-job,
+.module-status-item,
+.smps-plot-stat {
+  background: #352582;
+  border: 0;
+  border-radius: 10px;
 }
