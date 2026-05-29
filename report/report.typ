@@ -452,11 +452,40 @@ The host dashboard polls the supercap telemetry endpoint at 20 Hz throughout the
 
 The decision to log at 20 Hz from the dashboard rather than at the full 1 kHz from firmware was driven by Pico W RAM constraints. A full 60-second test at 1 kHz with ten fields per sample at 8 bytes each would require approximately 4.8 MB, well beyond the Pico W's 264 kB usable RAM; flash logging would be slow and would wear the chip with each test. The 20 Hz dashboard approach off-loads sample retention to the browser, where the limit is effectively browser memory rather than embedded RAM. The energy integrations themselves remain at 1 kHz internally so the displayed efficiency numbers are not limited by the log rate; the 20 Hz CSV is intended for post-experiment visual inspection and plotting, not for the efficiency calculation itself.
 
-=== Expected Results and Future Work
+=== Measured Results
 
-A representative cycle at $I_("charge") = I_("discharge") = 0.2$ A is anticipated to transfer approximately 34 J of cap-side energy ($1/2 C (V_("high")^2 - V_("low")^2) = 1/2 dot 0.5 dot (15.7^2 - 10.5^2)$) over roughly 16-second charge and 16-second discharge phases, with $eta_("RT")$ in the 70 to 85% range typical for boost SMPS at this current level. $eta_("charge")$ and $eta_("discharge")$ are expected to be within a few percent of each other given the symmetric switching topology; any larger asymmetry is interpreted as the discharge taper interacting with the soft-current taper near the low endpoint. Sweeping $I_("charge")$ and $I_("discharge")$ over 0.10, 0.15, 0.20 and 0.25 A yields the efficiency-versus-current curve reported in Section 11.
+The cycle test was run as two sweeps, each repeated three times: a charge and discharge current sweep at 0.1, 0.2 and 0.3A with the bus held at 10V, and a bus voltage sweep at 8.0, 8.5, 9.0, 9.5 and 10.0V with the current fixed at 0.2A. @fig:cap-cycle shows a representative cycle at the 10V, 0.2A operating point. The capacitor voltage ramps from 10.5V to the 15.7V cutoff over a 19-second charge and back over a 17-second discharge, while the bus-side energy integrals accumulate to $E_("in") = 38.2$ J on charge and $E_("out") = 33.7$ J on discharge. The cap-side energy swing $1/2 C (V_("high")^2 - V_("low")^2) approx 34$ J matches the design estimate.
 
-The cap cycle test also doubles as a calibration reference for the future-work automated PV efficiency measurement (Section 3.3): once $eta_("cap,charge")$ is known at a representative operating point, the cap can stand in as a known-efficiency load for PV characterisation runs.
+#figure(
+  image("images/supercap_cycle_trace.png", width: 100%),
+  caption: [Measured supercapacitor charge and discharge cycle at 10V, 0.2A.],
+) <fig:cap-cycle>
+
+Round-trip efficiency is reported as $eta_("RT") = E_("out") / E_("in")$, with both energies measured at the bus, so the figure is independent of any cap-side assumption. @fig:cap-eff plots it against current and against bus voltage, showing all three runs per point. The headline result is a round-trip efficiency of approximately 88%, slightly above the conservative 70 to 85% pre-test estimate and stable across the operating range. The dependence on current is weak and slightly negative (89.7% at 0.1A, 88.3% at 0.2A, 88.2% at 0.3A), consistent with conduction loss growing with current. The dependence on bus voltage is weaker still and largely within the run-to-run scatter, with a mild rise toward higher bus voltage (87.3% at 8V to 88.3% at 10V) consistent with the smaller boost ratio, and therefore lower switch stress, when the cap sits closer to the bus.
+
+#figure(
+  image("images/supercap_efficiency.png", width: 100%),
+  caption: [Measured round-trip efficiency versus current and versus bus voltage.],
+) <fig:cap-eff>
+
+#table(
+  columns: (auto, auto, auto),
+  align: (left, center, center),
+  stroke: 0.5pt,
+  [*Sweep*], [*Setpoint*], [*Mean $eta_("RT")$, 3 runs*],
+  [Current at 10V bus], [0.1A], [89.7%],
+  [], [0.2A], [88.3%],
+  [], [0.3A], [88.2%],
+  [Bus voltage at 0.2A], [8.0V], [87.3%],
+  [], [8.5V], [87.7%],
+  [], [9.0V], [87.4%],
+  [], [9.5V], [88.8%],
+  [], [10.0V], [88.3%],
+)
+
+The per-phase split into $eta_("charge")$ and $eta_("discharge")$ is deliberately not reported as a headline figure, because the data shows it is unreliable on this bank. The split needs the open-circuit cap energy $1/2 C V^2$ captured at each settle phase, but the supercapacitor's distributed series resistance means the terminal voltage keeps redistributing after the current stops, exactly the effect the brief warns about. The discharge-side split routinely came out above 100%, which is unphysical, because more energy is drawn from the cap on discharge than the post-settle open-circuit voltage implies. Since $eta_("RT") = E_("out") / E_("in")$ is computed entirely from bus-side measurements it is immune to this, and is the figure carried into Section 11. The finding is itself informative: the cap-side voltage is adequate for the state-of-charge display but not for a clean charge versus discharge efficiency split.
+
+The cap cycle test also feeds the future-work automated PV efficiency measurement (Section 3.3): because the bus-side energy delivered into the cap is directly measured, a PV run that charges the cap can be cross-checked against $E_("in")$ without relying on the cap-side split.
 
 #pagebreak()
 
@@ -703,7 +732,7 @@ Each SMPS module is characterised across a small grid of operating points, with 
 
 PV SMPS (Section 3.3): manual measurement using a DMM placed in series with the PV-to-bus wire. The pre-loss panel power $P_("panel,in")$ is available directly from the firmware (both factors are Port B); the post-loss bus power $P_("bus,out")$ requires the external DMM because Port A is uninstrumented. Sweep is bus voltage at four points crossing the import/export dead-band, and panel irradiance at four levels via the lab dimmer.
 
-Supercap SMPS (Section 4.3): fully automated cycle test triggered from the host dashboard, using the bank capacitance as an internal calibration reference. The test integrates bus-side $E_("in")$ and $E_("out")$ at 1 kHz and computes $eta_("charge")$, $eta_("discharge")$ and $eta_("RT")$ from a single charge and discharge cycle. Sweep is charge and discharge current at four levels.
+Supercap SMPS (Section 4.3): fully automated cycle test triggered from the host dashboard. The test integrates bus-side $E_("in")$ and $E_("out")$ at the 1 kHz tick and reports the round-trip efficiency $eta_("RT") = E_("out") / E_("in")$ from a single charge and discharge cycle. The sweep covers charge and discharge current at three levels (0.1, 0.2, 0.3 A) at a 10V bus, and bus voltage at five levels (8.0 to 10.0 V) at 0.2 A. The measured round-trip efficiency is approximately 88%.
 
 Import SMPS (Section 5.3): manual measurement using the bench PSU's built-in current readout for the pre-loss $P_("PSU,drawn")$ side; the post-loss $P_("bus,delivered")$ is available from the firmware. Sweep is bus voltage at four points and import current at four points.
 
@@ -711,7 +740,7 @@ Export SMPS is not characterised for efficiency because its losses occur between
 
 == Performance Metrics
 
-The headline metrics extracted from the efficiency sweeps are tabulated below. Each entry is a ratio of post-loss output power to pre-loss input power, averaged over the relevant operating window. For the supercap, three distinct numbers are reported per operating point: charge, discharge and round-trip. For PV and import, a single number is reported per operating point. All numbers are accompanied by their operating point (bus voltage, current, irradiance) and by the underlying $P_("in")$ and $P_("out")$ raw readings so the ratios can be audited.
+The headline metrics extracted from the efficiency sweeps are tabulated below. Each entry is a ratio of post-loss output power to pre-loss input power, averaged over the relevant operating window. For the supercap, the round-trip efficiency is reported per operating point, the per-phase charge and discharge split being confounded by the cap's charge redistribution (Section 4.3). For PV and import, a single number is reported per operating point. All numbers are accompanied by their operating point (bus voltage, current, irradiance) and by the underlying $P_("in")$ and $P_("out")$ raw readings so the ratios can be audited.
 
 In addition to the SMPS efficiency table, two derived system-level metrics are reported. The first is the steady-state bus voltage error against the 10 V nominal under each of the Section 11 test scenarios, measured against the ±0.1 V droop budget defined in Section 2.3. The second is the energy balance closure across the bus for full-cycle scenarios:
 

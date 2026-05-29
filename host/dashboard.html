@@ -1243,9 +1243,18 @@ function drawModuleChart(name) {
 // is just for CSV granularity, not for accuracy.
 
 let _cycleSamples    = [];     // accumulated rows for CSV
-let _cycleFastPollId = null;   // setInterval handle while a test runs
+let _cyclePollTimer  = null;   // setTimeout handle for the non-overlapping poll
+let _cycleRunning    = false;  // true while a test is being polled
 let _cycleStartedAt  = 0;      // wall-clock ms when "Start cycle" was pressed
 const C_BANK_F_DASH  = 0.5;    // matches firmware C_BANK_F
+const CYCLE_POLL_MS  = 200;    // 5 Hz target. The poll is NON-overlapping (see
+                               // _cyclePollTick): the next request is only
+                               // scheduled after the previous one finishes, so
+                               // fetches can never pile up against the Pico's
+                               // listen(2) backlog. The old 20 Hz setInterval
+                               // did pile up under load (each fetch can take up
+                               // to its 1.5 s timeout), refusing connections and
+                               // dropping the link mid-test.
 
 function startCycleTest() {
   const ic = parseFloat(document.getElementById('cap-test-icharge').value);
@@ -1260,21 +1269,29 @@ function startCycleTest() {
   document.getElementById('cap-test-abort').disabled = false;
   document.getElementById('cap-test-csv').disabled   = true;
   send('cap', { test_start: 1, test_i_charge: ic, test_i_discharge: id });
-  if (_cycleFastPollId) clearInterval(_cycleFastPollId);
-  _cycleFastPollId = setInterval(cycleFastPollOnce, 50);   // 20 Hz
+  _cycleRunning = true;
+  _cyclePollTick();
+}
+
+// Self-scheduling poll: awaits each /tlm round-trip (including its timeout)
+// to COMPLETE, then schedules the next one CYCLE_POLL_MS later. Guarantees at
+// most one in-flight request at a time, so no pile-up and no refused
+// connections, which is what made the link drop during the test.
+async function _cyclePollTick() {
+  if (!_cycleRunning) return;
+  try { await cycleFastPollOnce(); } catch (e) { }
+  if (_cycleRunning) _cyclePollTimer = setTimeout(_cyclePollTick, CYCLE_POLL_MS);
 }
 
 function abortCycleTest() {
   send('cap', { test_abort: 1 });
-  // Don't stop the fast poll here -- let it run until firmware reports
-  // 'aborted' in /tlm so the final sample lands in the CSV.
+  // Don't stop polling here -- let it run until firmware reports 'aborted'
+  // in /tlm so the final sample lands in the CSV.
 }
 
 function _cycleStopFastPoll() {
-  if (_cycleFastPollId) {
-    clearInterval(_cycleFastPollId);
-    _cycleFastPollId = null;
-  }
+  _cycleRunning = false;
+  if (_cyclePollTimer) { clearTimeout(_cyclePollTimer); _cyclePollTimer = null; }
   document.getElementById('cap-test-start').disabled = false;
   document.getElementById('cap-test-abort').disabled = true;
   document.getElementById('cap-test-csv').disabled   = (_cycleSamples.length === 0);

@@ -229,6 +229,7 @@ def _http_server(state, port):
     s.bind(('0.0.0.0', port))
     s.listen(2)
     s.settimeout(0.5)   # accept() returns every 500 ms so we can re-check state['shutdown']
+    gc_count = 0
     while not state.get('shutdown', False):
         cl = None
         try:
@@ -288,7 +289,13 @@ def _http_server(state, port):
                     cl.close()
                 except Exception:
                     pass
-            gc.collect()
+            # Collect every few requests, not every one. At the cap cycle
+            # test's 20 Hz logging, a per-request stop-the-world GC stalls
+            # this WiFi/HTTP thread ~20x/s and makes the link shaky.
+            gc_count += 1
+            if gc_count >= 10:
+                gc_count = 0
+                gc.collect()
     # Loop exited (state['shutdown'] is True). Release the listening socket.
     try:
         s.close()

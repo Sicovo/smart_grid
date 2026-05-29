@@ -64,7 +64,7 @@
 # partial numbers.
 
 import time
-from machine import Pin, ADC, I2C, PWM, Timer
+from machine import Pin, ADC, I2C, PWM, Timer, idle
 from common import wifi_connect, start_http_thread
 
 # ---------------- Hardware ----------------
@@ -173,6 +173,8 @@ state = {
 _i_err_int   = 0.0
 _pwm_out     = PWM_MIN
 _print_cnt   = 0
+_tlm_cnt     = 0
+_last_e_ms   = time.ticks_ms()   # for measured-dt energy integration
 _trip_active = 0
 _trip_reason = ''
 
@@ -323,6 +325,17 @@ try:
         if timer_elapsed:
             timer_elapsed = 0
 
+            # Measured elapsed time since the last processed tick. The energy
+            # integrators use this instead of a fixed 1 ms so E_in / E_out stay
+            # correct even if the loop ever falls behind 1 kHz. (A stalled loop
+            # used to credit 1 ms per iteration over longer real gaps, which
+            # undercounted the energies and gave impossible >100% efficiencies.)
+            _now_e = time.ticks_ms()
+            _dt_s  = time.ticks_diff(_now_e, _last_e_ms) / 1000.0
+            if _dt_s > 0.5:
+                _dt_s = 0.5          # clamp pathological gaps
+            _last_e_ms = _now_e
+
             _va = read_va()       # cap
             _vb = read_vb()       # bus
             _il = ina_current()   # +ve = charging
@@ -429,7 +442,7 @@ try:
                         test_i_cmd = +_test_i_charge
                         # Bus-side input energy. _p_lp = vb_lp * iL_lp; iL > 0
                         # during charging so _p_lp > 0.
-                        _test_E_in += _p_lp * DT_S
+                        _test_E_in += _p_lp * _dt_s
                         if _va_lp >= TEST_V_HI:
                             _test_phase       = 'settle2'
                             _test_phase_start = now_ms_t
@@ -449,7 +462,7 @@ try:
                         test_i_cmd = -_test_i_discharge
                         # Bus-side output energy. iL < 0 during discharging
                         # so _p_lp < 0; magnitude is the post-loss bus power.
-                        _test_E_out += (-_p_lp) * DT_S
+                        _test_E_out += (-_p_lp) * _dt_s
                         if _va_lp <= TEST_V_LO:
                             _test_phase       = 'settle3'
                             _test_phase_start = now_ms_t
@@ -500,41 +513,49 @@ try:
                     elif vb_scale > 1.0: vb_scale = 1.0
                     i_cmd_eff = i_cmd_eff * vb_scale
 
-            # ---- Telemetry ----
+            # ---- Telemetry (throttled to ~50 Hz) ----
             # v_cap, vb_bus, iL, p_cap are EMA-filtered for calm dashboard
             # display. Raw _va / _vb / _il still drive the inner PI and
             # safety guards just above/below this block.
-            state['tlm'] = {
-                'role':        'cap',
-                'v_cap':       _va_lp,
-                'vb_bus':      _vb_lp,
-                'iL':          _il_lp,
-                'p_cap':       _p_lp,                # bus-side V*I (see header)
-                'p_avg3s':     _p_avg3s,
-                'soc_pct':     soc_pct(_va_lp),
-                'energy_J':    energy_J(_va_lp),
-                'i_cmd':       i_cmd_raw,
-                'i_cmd_eff':   i_cmd_eff,
-                'pwm':         int(_pwm_out),
-                'trip':        _trip_active,
-                'trip_reason': _trip_reason,
-                'enable':      1 if enabled else 0,
-                'wd':          0,
-                # ---- Cycle test (efficiency characterisation) ----
-                'test_phase':           _test_phase,
-                'test_t_ms':            (time.ticks_diff(time.ticks_ms(), _test_t_start)
-                                         if _test_phase != 'idle' else 0),
-                'test_i_charge_set':    _test_i_charge,
-                'test_i_discharge_set': _test_i_discharge,
-                'test_E_in_J':          _test_E_in,
-                'test_E_out_J':         _test_E_out,
-                'test_E_cap_start_J':   _test_E_cap_start,
-                'test_E_cap_peak_J':    _test_E_cap_peak,
-                'test_E_cap_end_J':     _test_E_cap_end,
-                'test_eta_charge':      _test_eta_charge,
-                'test_eta_discharge':   _test_eta_discharge,
-                'test_eta_roundtrip':   _test_eta_roundtrip,
-            }
+            # Rebuilding this ~25-field dict at the full 1 kHz tick churns the
+            # heap and triggers GC pauses that stall the core-1 WiFi/HTTP
+            # thread during the 20 Hz cycle-test logging. 50 Hz is 2.5x the
+            # dashboard poll rate, so the displayed data is unaffected. Energy
+            # integration and the inner PI below still run every tick.
+            _tlm_cnt += 1
+            if _tlm_cnt >= 20:
+                _tlm_cnt = 0
+                state['tlm'] = {
+                    'role':        'cap',
+                    'v_cap':       _va_lp,
+                    'vb_bus':      _vb_lp,
+                    'iL':          _il_lp,
+                    'p_cap':       _p_lp,                # bus-side V*I (see header)
+                    'p_avg3s':     _p_avg3s,
+                    'soc_pct':     soc_pct(_va_lp),
+                    'energy_J':    energy_J(_va_lp),
+                    'i_cmd':       i_cmd_raw,
+                    'i_cmd_eff':   i_cmd_eff,
+                    'pwm':         int(_pwm_out),
+                    'trip':        _trip_active,
+                    'trip_reason': _trip_reason,
+                    'enable':      1 if enabled else 0,
+                    'wd':          0,
+                    # ---- Cycle test (efficiency characterisation) ----
+                    'test_phase':           _test_phase,
+                    'test_t_ms':            (time.ticks_diff(time.ticks_ms(), _test_t_start)
+                                             if _test_phase != 'idle' else 0),
+                    'test_i_charge_set':    _test_i_charge,
+                    'test_i_discharge_set': _test_i_discharge,
+                    'test_E_in_J':          _test_E_in,
+                    'test_E_out_J':         _test_E_out,
+                    'test_E_cap_start_J':   _test_E_cap_start,
+                    'test_E_cap_peak_J':    _test_E_cap_peak,
+                    'test_E_cap_end_J':     _test_E_cap_end,
+                    'test_eta_charge':      _test_eta_charge,
+                    'test_eta_discharge':   _test_eta_discharge,
+                    'test_eta_roundtrip':   _test_eta_roundtrip,
+                }
 
             # ---- Safety guards ----
             if _va > V_CAP_OVERVOLT:
@@ -587,6 +608,10 @@ try:
                       'P_3s={:+.2f}W i_cmd={:+.3f}/{:+.3f} soc={:.0f}% pwm={}'
                       .format(_va_lp, _vb_lp, _il_lp, _p_lp, _p_avg3s,
                               i_cmd_raw, i_cmd_eff, soc_pct(_va_lp), int(_pwm_out)))
+        else:
+            # No tick pending: idle this core until the next timer interrupt so
+            # the busy-spin does not starve the core-1 WiFi/HTTP thread.
+            idle()
 
 except KeyboardInterrupt:
     print("\n[cap] interrupted -- entering safe state...")

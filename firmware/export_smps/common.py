@@ -102,8 +102,12 @@ class INA219:
         self.i2c = i2c
         self.address = address
         self.shunt = shunt_ohms
-        # PG=/8 — matches the bidirectional template
-        self.i2c.writeto_mem(self.address, self.REG_CONFIG, b'\x19\x9F')
+        # CONFIG 0x1E67: PG=/8 (16 V bus, +/-320 mV shunt), 16-sample 12-bit
+        # averaging (~8.5 ms). Was 0x199F (single sample, ~530 us, noisy iL).
+        # The averaging is what the report's noise treatment (Sections 5.2, 7)
+        # relies on. This current also feeds the inner PI, so re-verify the
+        # current-loop stability at the bench after flashing.
+        self.i2c.writeto_mem(self.address, self.REG_CONFIG, b'\x1E\x67')
         self.i2c.writeto_mem(self.address, self.REG_CALIBRATION, b'\x00\x00')
 
     def vshunt(self):
