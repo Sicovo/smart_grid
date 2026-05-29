@@ -617,6 +617,7 @@ function statsGrid(d) {
     statCard('Bus voltage Vb', d.vb_bus,      'V', 'bus', 2),
     statCard('Inductor iL',    d.iL,          'A', 'bus', 3),
     statCard('Import power',   d.p_import,    'W', 'pwr-in', 2),
+    statCard('Pimp 3s avg',    d.p_avg3s,     'W', 'pwr-in', 3, 'resets on target change'),
     statCard('i_ref',          d.i_ref,       'A', null, 3),
     statCard('Bus target',     d.vb_target,   'V', null, 2),
   ].join('');
@@ -690,6 +691,7 @@ function statsCap(d) {
     statCard('Inductor iL',     d.iL,       'A', 'cap', 3),
     statCard('Cap power',       d.p_cap,    'W', 'pwr-in', 2,
              (typeof d.p_cap === 'number' && d.p_cap < 0) ? 'discharging' : 'charging'),
+    statCard('Pcap 3s avg',     d.p_avg3s,  'W', 'pwr-in', 3, 'resets on i_cmd change'),
     statCard('i_cmd',           d.i_cmd,    'A', null, 3, cmdSub),
     statCard('Direction',       dir,        null,'cap', 0),
     socCard,
@@ -933,6 +935,24 @@ function build() {
         <button class="danger" onclick="send('cap',{enable:0,i_cmd:0})">Disable</button>
         <button class="warn" onclick="send('cap',{reset_trip:1})">⚠ Reset Trip</button>
       </div>
+      <div class="row" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;align-items:baseline">
+        <label style="font-weight:600;letter-spacing:0.5px">CYCLE TEST</label>
+        <span style="color:var(--dim);font-size:10px;flex:1">round-trip efficiency, full 10.5–15.7 V window</span>
+      </div>
+      <div class="row">
+        <label>Charge I</label>
+        <input type="number" id="cap-test-icharge" step="0.05" min="0.05" max="0.30" value="0.20" style="width:70px">
+        <span style="color:var(--dim);font-size:10px">A</span>
+        <label style="margin-left:12px">Discharge I</label>
+        <input type="number" id="cap-test-idischarge" step="0.05" min="0.05" max="0.30" value="0.20" style="width:70px">
+        <span style="color:var(--dim);font-size:10px">A</span>
+      </div>
+      <div class="quickbar">
+        <button id="cap-test-start" onclick="startCycleTest()">▶ Start cycle</button>
+        <button id="cap-test-abort" class="danger" onclick="abortCycleTest()" disabled>■ Abort</button>
+        <button id="cap-test-csv" onclick="downloadCycleCsv()" disabled>⇣ Download CSV</button>
+      </div>
+      <div id="cap-test-status" style="font-size:11px;color:var(--dim);line-height:1.7;padding:8px 2px 2px 2px"></div>
       `) +
     moduleShell('lux', 'Lux — irradiance sensor', `
       <div class="row">
@@ -1212,6 +1232,155 @@ function drawModuleChart(name) {
               ${tr.label} ${val}
             </span>`;
   }).join('');
+}
+
+// ---------- Cap cycle test (efficiency characterisation) ----------
+// Drives a charge/discharge cycle via firmware commands and polls
+// cap /tlm at 20 Hz while the test runs so we can stream every
+// sample into a JS array. At the end the array becomes a CSV blob
+// the user downloads through the browser. Energies are integrated
+// at the full 1 kHz tick rate inside the firmware; the 20 Hz poll
+// is just for CSV granularity, not for accuracy.
+
+let _cycleSamples    = [];     // accumulated rows for CSV
+let _cycleFastPollId = null;   // setInterval handle while a test runs
+let _cycleStartedAt  = 0;      // wall-clock ms when "Start cycle" was pressed
+const C_BANK_F_DASH  = 0.5;    // matches firmware C_BANK_F
+
+function startCycleTest() {
+  const ic = parseFloat(document.getElementById('cap-test-icharge').value);
+  const id = parseFloat(document.getElementById('cap-test-idischarge').value);
+  if (!isFinite(ic) || ic <= 0 || !isFinite(id) || id <= 0) {
+    alert('Enter valid charge / discharge currents (0.05–0.30 A).');
+    return;
+  }
+  _cycleSamples   = [];
+  _cycleStartedAt = Date.now();
+  document.getElementById('cap-test-start').disabled = true;
+  document.getElementById('cap-test-abort').disabled = false;
+  document.getElementById('cap-test-csv').disabled   = true;
+  send('cap', { test_start: 1, test_i_charge: ic, test_i_discharge: id });
+  if (_cycleFastPollId) clearInterval(_cycleFastPollId);
+  _cycleFastPollId = setInterval(cycleFastPollOnce, 50);   // 20 Hz
+}
+
+function abortCycleTest() {
+  send('cap', { test_abort: 1 });
+  // Don't stop the fast poll here -- let it run until firmware reports
+  // 'aborted' in /tlm so the final sample lands in the CSV.
+}
+
+function _cycleStopFastPoll() {
+  if (_cycleFastPollId) {
+    clearInterval(_cycleFastPollId);
+    _cycleFastPollId = null;
+  }
+  document.getElementById('cap-test-start').disabled = false;
+  document.getElementById('cap-test-abort').disabled = true;
+  document.getElementById('cap-test-csv').disabled   = (_cycleSamples.length === 0);
+}
+
+async function cycleFastPollOnce() {
+  const d = await poll('cap');
+  if (!d) return;
+  const ph = d.test_phase || 'idle';
+
+  // Per-sample cap-side stored energy = 1/2 C V^2. Logged so the CSV
+  // can plot ΔE_cap over time without the user needing C as input.
+  const v = (typeof d.v_cap === 'number') ? d.v_cap : 0;
+  const Ecap = 0.5 * C_BANK_F_DASH * v * v;
+
+  _cycleSamples.push({
+    t_ms:        d.test_t_ms || 0,
+    phase:       ph,
+    v_cap:       d.v_cap,
+    v_bus:       d.vb_bus,
+    iL:          d.iL,
+    p_bus:       d.p_cap,
+    E_in_J:      d.test_E_in_J,
+    E_out_J:     d.test_E_out_J,
+    E_cap_inst_J: Ecap,
+    i_cmd_eff:   d.i_cmd_eff,
+  });
+
+  updateCycleStatus(d);
+
+  if (ph === 'done' || ph === 'aborted') {
+    _cycleStopFastPoll();
+  }
+}
+
+function updateCycleStatus(d) {
+  const el = document.getElementById('cap-test-status');
+  if (!el) return;
+  const ph = d.test_phase || 'idle';
+  const t  = d.test_t_ms || 0;
+  const f  = (x, dig) => (typeof x === 'number' && isFinite(x)) ? x.toFixed(dig) : '—';
+
+  if (ph === 'idle') {
+    el.innerHTML = '<i>Idle. Set currents, then click Start cycle.</i>';
+    return;
+  }
+
+  const phaseColor = (ph === 'done')    ? 'var(--ok)'
+                  : (ph === 'aborted') ? 'var(--err)'
+                  :                      'var(--warn)';
+  let html =
+    `<b>Phase:</b> <span style="color:${phaseColor}">${ph}</span>` +
+    ` &nbsp;<b>t:</b> ${(t/1000).toFixed(1)} s` +
+    ` &nbsp;<b>Vcap:</b> ${f(d.v_cap, 3)} V` +
+    ` &nbsp;<b>samples:</b> ${_cycleSamples.length}<br>` +
+    `<b>E_in:</b> ${f(d.test_E_in_J, 2)} J` +
+    ` &nbsp;<b>E_out:</b> ${f(d.test_E_out_J, 2)} J` +
+    ` &nbsp;<b>ΔE_cap (charge):</b> ` +
+      `${f((d.test_E_cap_peak_J || 0) - (d.test_E_cap_start_J || 0), 2)} J`;
+
+  if (ph === 'done') {
+    const pct = (x) => f(100 * (x || 0), 1);
+    html +=
+      `<br><b style="color:var(--ok)">RESULTS</b> &nbsp;` +
+      `η_charge = ${pct(d.test_eta_charge)} % &nbsp;` +
+      `η_discharge = ${pct(d.test_eta_discharge)} % &nbsp;` +
+      `<b>η_roundtrip = ${pct(d.test_eta_roundtrip)} %</b>`;
+  }
+  if (ph === 'aborted') {
+    html +=
+      '<br><span style="color:var(--err)"><b>⚠ Test aborted.</b> ' +
+      'Partial CSV still available for download.</span>';
+  }
+  el.innerHTML = html;
+}
+
+function downloadCycleCsv() {
+  if (_cycleSamples.length === 0) return;
+  const header = 't_ms,phase,v_cap,v_bus,iL,p_bus_W,E_in_J,E_out_J,E_cap_inst_J,i_cmd_eff';
+  const lines  = [header];
+  for (const s of _cycleSamples) {
+    const f = (x, d) => (typeof x === 'number' && isFinite(x)) ? x.toFixed(d) : '';
+    lines.push([
+      s.t_ms,
+      s.phase || '',
+      f(s.v_cap, 4),
+      f(s.v_bus, 4),
+      f(s.iL, 4),
+      f(s.p_bus, 4),
+      f(s.E_in_J, 4),
+      f(s.E_out_J, 4),
+      f(s.E_cap_inst_J, 4),
+      f(s.i_cmd_eff, 4),
+    ].join(','));
+  }
+  const csv  = lines.join('\n') + '\n';
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const ts   = new Date(_cycleStartedAt).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  a.href     = url;
+  a.download = `cap_cycle_${ts}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ---------- Poll loop ----------

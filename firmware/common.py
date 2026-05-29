@@ -99,8 +99,16 @@ class INA219:
         self.i2c = i2c
         self.address = address
         self.shunt = shunt_ohms
-        # PG=/8 — matches the bidirectional template
-        self.i2c.writeto_mem(self.address, self.REG_CONFIG, b'\x19\x9F')
+        # CONFIG = 0x1E67:
+        #   BRNG=0 (16 V bus range), PG=/8 (±320 mV shunt),
+        #   BADC=SADC=1100 (12-bit, 16-sample averaging, ~8.5 ms),
+        #   MODE=111 (continuous shunt + bus).
+        # Was 0x199F (single 12-bit sample, ~530 us, noisy iL). The extra
+        # averaging is what makes p_import / p_cap displayed values calm
+        # enough for the dashboard 3 s average to be useful for efficiency
+        # characterisation. Affects every module using this class (grid,
+        # export).
+        self.i2c.writeto_mem(self.address, self.REG_CONFIG, b'\x1E\x67')
         self.i2c.writeto_mem(self.address, self.REG_CALIBRATION, b'\x00\x00')
 
     def vshunt(self):

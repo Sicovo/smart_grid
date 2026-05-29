@@ -148,6 +148,7 @@ function GridStats({ d }) {
     <Stat label="Bus Vb"       val={d.vb_bus}    unit="V" />
     <Stat label="Inductor iL"  val={d.iL}        unit="A" digits={3} />
     <Stat label="Import power" val={d.p_import}  unit="W" />
+    <Stat label="Pimp 3s avg"  val={d.p_avg3s}   unit="W" digits={3} />
     <Stat label="i_ref"        val={d.i_ref}     unit="A" digits={3} />
     <Stat label="Bus target"   val={d.vb_target} unit="V" />
   </>;
@@ -173,6 +174,7 @@ function CapStats({ d }) {
     <Stat label="Bus Vb"     val={d.vb_bus}    unit="V" />
     <Stat label="Inductor iL" val={d.iL}       unit="A" digits={3} />
     <Stat label="Cap power"  val={d.p_cap}     unit="W" />
+    <Stat label="Pcap 3s avg" val={d.p_avg3s}  unit="W" digits={3} />
     <Stat label="i_cmd"      val={d.i_cmd}     unit="A" digits={3} />
     <Stat label="i_cmd_eff"  val={d.i_cmd_eff} unit="A" digits={3} />
     <div className="smps-stat smps-stat-wide">

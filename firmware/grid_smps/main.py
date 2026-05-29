@@ -13,10 +13,21 @@
 # Grid sources when the bus sags below 9.9, idles in the 9.9–10.1 deadband,
 # stays idle when the bus is high (export will handle that side).
 #
-# Telemetry:  { role, v_psu, vb_bus, iL, i_ref, pwm, trip, vb_target }
+# Telemetry:  { role, v_psu, vb_bus, iL, p_import, p_avg3s, i_ref, pwm,
+#               trip, vb_target }
 # Commands:   { enable, vb_target, i_ref_max }
 #     vb_target = 0 (or enable = 0) forces the module fully idle, which is how
 #     a higher-level scheduler can hand the bus off entirely to export.
+#
+# Noise treatment (matches pv_smps / cap_smps):
+#   - INA219 default config in common.py bumped to 16-sample averaging.
+#   - 4x ADC oversample on va, vb reads.
+#   - EMA on va, vb, iL drives the telemetry. Inner PI + safety still
+#     use raw values for fast response.
+#   - p_import = vb_lp * iL_lp; this IS the genuine bus-side delivered
+#     power (post-SMPS-loss) since both vb and iL are port-B quantities.
+#   - p_avg3s = 3-second block average; window restarts on (vb_target,
+#     i_ref_max, enable) change so steady-state numbers are clean.
 
 import time
 from machine import Pin, ADC, I2C, PWM, Timer
@@ -33,10 +44,14 @@ pwm.freq(PWM_FREQ_HZ)
 ina_i2c = I2C(0, scl=Pin(1), sda=Pin(0), freq=2_400_000)
 
 def read_va():
-    return (12490 / 2490) * 3.3 * (va_pin.read_u16() / 65536)
+    # 4x oversample -- kills Pico ADC LSB noise (the dominant noise floor
+    # on the displayed bus / PSU voltages). ~10 us overhead per call.
+    s = va_pin.read_u16() + va_pin.read_u16() + va_pin.read_u16() + va_pin.read_u16()
+    return (12490 / 2490) * 3.3 * ((s >> 2) / 65536)
 
 def read_vb():
-    return (12490 / 2490) * 3.3 * (vb_pin.read_u16() / 65536)
+    s = vb_pin.read_u16() + vb_pin.read_u16() + vb_pin.read_u16() + vb_pin.read_u16()
+    return (12490 / 2490) * 3.3 * ((s >> 2) / 65536)
 
 # ---------------- Tuning ----------------
 
@@ -82,6 +97,25 @@ trip_latched = 0
 trip_reason  = ''
 i_ref   = 0.0
 pwm_out = PWM_MIN
+
+# Display power filter -- feeds telemetry only. Inner PI + safety guards
+# below this still consume the raw single-sample va / vb / iL.
+EMA_ALPHA = 0.05
+va_lp = 0.0
+vb_lp = 0.0
+iL_lp = 0.0
+p_lp  = 0.0
+
+# 3-second block average of p_import. Window restarts on operating-point
+# change so each completed average reflects a single (vb_target, i_max,
+# enable) configuration -- the dashboard number you read at steady state.
+P_AVG_WINDOW_MS = 3000
+pavg_sum   = 0.0
+pavg_n     = 0
+pavg_start = 0
+p_avg3s    = 0.0
+prev_op    = None
+
 loop_timer = Timer(mode=Timer.PERIODIC, freq=TICK_HZ, callback=tick)
 cnt = 0
 
@@ -106,12 +140,42 @@ try:
             vb = read_vb()      # bus
             iL = ina.iL()       # current into bus (positive = import)
 
+            # EMA filter for telemetry only. Kick filters with first sample
+            # to skip the boot-time ramp from 0 to true value.
+            if va_lp == 0.0:
+                va_lp = va
+                vb_lp = vb
+                iL_lp = iL
+            else:
+                va_lp = (1.0 - EMA_ALPHA) * va_lp + EMA_ALPHA * va
+                vb_lp = (1.0 - EMA_ALPHA) * vb_lp + EMA_ALPHA * vb
+                iL_lp = (1.0 - EMA_ALPHA) * iL_lp + EMA_ALPHA * iL
+            p_lp = vb_lp * iL_lp
+
             cmd     = state['cmd']
             target  = cmd.get('vb_target', VB_TARGET_DEFAULT)
             i_max   = min(I_REF_HI, max(0.0, cmd.get('i_ref_max', I_REF_HI)))
             wd      = watchdog_tripped(state, time.ticks_ms())
             # vb_target <= 0.1 V means "off" — scheduler hands the bus to export.
             enabled = bool(cmd.get('enable', 0)) and target > 0.1
+
+            # 3-second block average of p_import. Restart on any change to
+            # the commanded operating point so steady-state numbers compare
+            # cleanly across sweeps.
+            now_ms_pavg = time.ticks_ms()
+            op_point = (round(target, 2), round(i_max, 3), 1 if enabled else 0)
+            if op_point != prev_op:
+                pavg_sum   = 0.0
+                pavg_n     = 0
+                pavg_start = now_ms_pavg
+                prev_op    = op_point
+            pavg_sum += p_lp
+            pavg_n   += 1
+            if time.ticks_diff(now_ms_pavg, pavg_start) >= P_AVG_WINDOW_MS:
+                p_avg3s    = pavg_sum / pavg_n
+                pavg_sum   = 0.0
+                pavg_n     = 0
+                pavg_start = now_ms_pavg
 
             # Trip reset from dashboard (one-shot). Re-latches next tick if the
             # fault persists, unless the grace window masks it.
@@ -156,10 +220,11 @@ try:
 
             state['tlm'] = {
                 'role':      'grid',
-                'v_psu':     va,
-                'vb_bus':    vb,
-                'iL':        iL,
-                'p_import':  vb * iL,
+                'v_psu':     va_lp,
+                'vb_bus':    vb_lp,
+                'iL':        iL_lp,
+                'p_import':  p_lp,
+                'p_avg3s':   p_avg3s,
                 'i_ref':     i_ref,
                 'pwm':       pwm_out,
                 'trip':      trip_latched,
@@ -173,8 +238,9 @@ try:
 
             cnt += 1
             if cnt >= 500:
-                print("[grid] vbus=%.2f iL=%+.3f iref=%.3f pwm=%d tgt=%.2f trip=%d wd=%d grace=%d" %
-                      (vb, iL, i_ref, pwm_out, target, trip_latched, 1 if wd else 0, startup_grace))
+                print("[grid] vbus=%.2f iL=%+.3f P=%+.2fW P_3s=%+.2fW iref=%.3f pwm=%d tgt=%.2f trip=%d wd=%d grace=%d" %
+                      (vb_lp, iL_lp, p_lp, p_avg3s, i_ref, pwm_out, target,
+                       trip_latched, 1 if wd else 0, startup_grace))
                 cnt = 0
 except KeyboardInterrupt:
     print("\n[grid] interrupted — entering safe state...")
