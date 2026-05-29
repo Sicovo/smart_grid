@@ -29,6 +29,30 @@
 // numbers are `ref`/`cite` elements and stay black.
 #show link: set text(rgb("#1a3e7a"))
 
+// ---------- Tables: consistent, professional style ----------
+// Dark-blue header row with white bold text, light zebra striping on the body,
+// horizontal hairlines only (no vertical rules) and generous padding. The
+// protable() wrapper keeps each table on a single page so it never splits
+// across a page boundary.
+#let _tbl-blue  = rgb("#23457d")
+#let _tbl-zebra = rgb("#eef2f7")
+#let _tbl-line  = rgb("#cbd3df")
+
+#set table(
+  inset: (x: 7pt, y: 6pt),
+  stroke: (x, y) => (
+    left: none, right: none,
+    top: 0.5pt + _tbl-line,
+    bottom: if y == 0 { 0.9pt + _tbl-blue } else { 0.5pt + _tbl-line },
+  ),
+  fill: (x, y) => if y == 0 { _tbl-blue } else if calc.odd(y) { _tbl-zebra } else { white },
+)
+#show table.cell: set text(size: 10pt, hyphenate: false)
+#show table.cell: set par(justify: false)
+#show table.cell.where(y: 0): set text(fill: white, weight: "bold")
+
+#let protable(..args) = block(breakable: false, table(..args))
+
 // ---------- Heading numbering & styling ----------
 #set heading(numbering: "1.1")
 
@@ -182,10 +206,9 @@ System architecture decisions fix the boundary conditions for every subsequent S
 
 The system comprises five SMPS modules cooperating on a shared 10V DC bus. Each module implements a specific role with a topology and control mode chosen to match it.
 
-#table(
+#protable(
   columns: (auto, auto, auto, auto, auto),
-  align: (left, left, left, left, left),
-  stroke: 0.5pt,
+  align: left + horizon,
   [*Module*], [*External component*], [*Topology*], [*Control*], [*Role on the bus*],
   [Import SMPS], [12V grid PSU], [Buck], [CV, droop at 9.9V], [Sources current when bus < 9.9V],
   [Export SMPS], [Sink resistor], [Buck], [CV, droop at 10.1V], [Sinks current when bus > 10.1V],
@@ -468,10 +491,9 @@ Round-trip efficiency is reported as $eta_("RT") = E_("out") / E_("in")$, with b
   caption: [Measured round-trip efficiency versus current and versus bus voltage.],
 ) <fig:cap-eff>
 
-#table(
+#protable(
   columns: (auto, auto, auto),
-  align: (left, center, center),
-  stroke: 0.5pt,
+  align: (left + horizon, center + horizon, center + horizon),
   [*Sweep*], [*Setpoint*], [*Mean $eta_("RT")$, 3 runs*],
   [Current at 10V bus], [0.1A], [89.7%],
   [], [0.2A], [88.3%],
@@ -752,10 +774,9 @@ The unmodelled $E_("losses,bus")$ residual captures bus-wire $I^2 R$ and any unc
 
 Each of the brief's six requirements is mapped below to the subsystem that realises it, the test that verifies it, and its current status. Requirement 5, the economic dispatch algorithm, is the principal item still in progress (Section 9); the remainder are implemented and verified by the tests described in the cited sections.
 
-#table(
-  columns: (auto, auto, auto, auto, auto),
-  align: (center, left, left, left, left),
-  stroke: 0.5pt,
+#protable(
+  columns: (auto, 2fr, 1.4fr, 1.5fr, 1.2fr),
+  align: (center + horizon, left + horizon, left + horizon, left + horizon, left + horizon),
   [*Req*], [*Requirement*], [*Realised by*], [*Verification*], [*Status*],
   [1], [Supply domestic LEDs per web demand], [LED Load SMPS (Section 6)], [CC power-following; demand poll], [Implemented],
   [2], [Extract PV energy with MPPT], [PV SMPS (Section 3)], [MPPT mode comparison; efficiency sweep], [Implemented],
