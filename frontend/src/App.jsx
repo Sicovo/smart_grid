@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import {
   Line,
   XAxis,
@@ -105,7 +106,7 @@ function App() {
           <button className="topbar-link topbar-support">Support</button>
           <div className="topbar-user">
             <span>Watt's Up</span>
-            <span className="topbar-avatar">F</span>
+            <span className="topbar-avatar">W</span>
           </div>
         </div>
       </header>
@@ -148,6 +149,14 @@ function App() {
         </aside>
 
         <main className="main-content">
+        <div className="hero-octopus">
+          <DotLottieReact
+            src="/porthole.lottie"
+            loop
+            autoplay
+            className="hero-octopus-lottie"
+          />
+        </div>
         {activeView === "smps" ? (
           <div className="dashboard-container" style={{ maxWidth: "100%" }}>
             <h1 className="page-title">SMPS Modules</h1>

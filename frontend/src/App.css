@@ -2,11 +2,36 @@
   box-sizing: border-box;
 }
 
+@font-face {
+  font-family: "Chromatophore";
+  src: url("/fonts/Chromatophore1504-Regular.woff2") format("woff2");
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "Chromatophore";
+  src: url("/fonts/Chromatophore1504-Medium.woff2") format("woff2");
+  font-weight: 500;
+}
+
+@font-face {
+  font-family: "Chromatophore";
+  src: url("/fonts/Chromatophore1504-Bold.woff2") format("woff2");
+  font-weight: 700;
+}
+
 body {
   margin: 0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: "Chromatophore", sans-serif;
   background-color: #0E032E; /* Octopus 深紫色背景 */
   color: #ffffff;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
 }
 
 /* 页面整体布局：侧边栏 + 主内容区 */
@@ -44,7 +69,7 @@ body {
   border-radius: 14px;
   color: white;
   font-size: 17px;
-  font-weight: 800;
+  font-weight: 500;
   gap: 10px;
   display: flex;
   align-items: center;
@@ -711,7 +736,7 @@ body {
 .smps-stat-val {
   font-size: 18px;
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: inherit;
   color: #e6e6e6;
 }
 .smps-stat-unit {
@@ -754,7 +779,7 @@ body {
   gap: 8px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: inherit;
   padding: 6px 8px;
   border-radius: 6px;
 }
@@ -844,7 +869,7 @@ body {
   border: 1px solid #2c2c2c;
   padding: 4px 6px;
   border-radius: 6px;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: inherit;
   font-size: 12px;
 }
 .smps-unit-hint {
@@ -861,7 +886,7 @@ body {
   text-align: right;
   color: #5a8ec9;
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: inherit;
   font-size: 12px;
 }
 
@@ -1070,7 +1095,7 @@ body {
   background: transparent;
   color: white;
   font-size: 15px;
-  font-weight: 800;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -1082,7 +1107,8 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 800;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .topbar-avatar {
@@ -1112,4 +1138,22 @@ body {
   background: #352582;
   border: 0;
   border-radius: 10px;
+}
+
+.hero-octopus {
+  position: absolute;
+  top: 96px;
+  right: 72px;
+  width: 130px;
+  height: 130px;
+  z-index: 5;
+}
+
+.hero-octopus-lottie {
+  width: 100%;
+  height: 100%;
+}
+
+.main-content {
+  position: relative;
 }
