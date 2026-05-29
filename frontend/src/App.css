@@ -312,12 +312,22 @@ body {
 .naive-item h3 {
   margin: 0;
   font-size: 20px;
+  overflow-wrap: anywhere;
+}
+
+.naive-grid-compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.naive-grid-compact .naive-item {
+  min-width: 0;
 }
 
 .naive-meta {
   margin: 12px 0 0 0;
   color: #a69ec4;
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .naive-toolbar {
@@ -334,6 +344,7 @@ body {
   gap: 8px;
   font-size: 12px;
   color: #a69ec4;
+  flex-wrap: wrap;
 }
 
 .naive-cooldown-input {
@@ -353,6 +364,8 @@ body {
   border-radius: 8px;
   padding: 8px 10px;
   cursor: pointer;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .naive-host-panel {
@@ -383,6 +396,7 @@ body {
   background: rgba(255, 255, 255, 0.04);
   color: #fff;
   padding: 8px;
+  min-width: 0;
 }
 
 .naive-host-actions {
@@ -390,6 +404,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .naive-host-msg {
@@ -401,6 +416,7 @@ body {
   margin: 10px 0 0 0;
   font-size: 13px;
   color: #00f0ff;
+  overflow-wrap: anywhere;
 }
 
 .btn-pink:disabled {
@@ -428,6 +444,10 @@ body {
 
   .naive-grid {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .naive-grid-compact {
+    grid-template-columns: 1fr;
   }
 
   .naive-host-grid {
@@ -915,6 +935,19 @@ body {
   overflow: hidden;
 }
 
+.smps-overview-graph-card {
+  grid-column: 1 / -1;
+}
+
+.smps-overview-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.smps-overview-card {
+  display: flex;
+  flex-direction: column;
+}
+
 .smps-plot-header {
   display: flex;
   justify-content: space-between;
@@ -1004,5 +1037,9 @@ body {
 @media (max-width: 1000px) {
   .smps-plots-page {
     grid-template-columns: 1fr;
+  }
+
+  .smps-overview-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
