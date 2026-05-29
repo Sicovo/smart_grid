@@ -44,7 +44,9 @@ VB_TARGET_DEFAULT = 10.2   # bring-up: wide 1 V deadband with grid at 9.5
                            # narrow to 9.9/10.1 once the loops are tuned and noise is bounded
 KP_V, KI_V = 0.5, 5.0
 KP_I, KI_I = 100, 300
-I_REF_HI   = 1.0          # max dissipation current — adjust to your resistor's power rating
+I_REF_HI   = 2.0          # max dissipation cap. 5 ohm load at ~10 V bus -> 2 A, 20 W.
+                          # Sized to worst-case export surplus (PV + supercap peak);
+                          # sits under the 2.8 A I_TRIP_ABS. Derives pi_v.out_hi / i_hi below.
 
 # ---------------- State ----------------
 

@@ -286,7 +286,7 @@ function GridControls({ onCmd }) {
 
 function ExportControls({ onCmd }) {
   const [vbt,  setVbt]  = useState('10.5');
-  const [imax, setImax] = useState('1.0');
+  const [imax, setImax] = useState('2.0');
   return <>
     <CtrlRow label="vb_target">
       <input className="smps-num-input" type="number" value={vbt} step="0.05" min="0" max="12"
@@ -295,7 +295,7 @@ function ExportControls({ onCmd }) {
       <Btn onClick={() => onCmd({ vb_target: parseFloat(vbt) })}>Apply</Btn>
     </CtrlRow>
     <CtrlRow label="i_ref_max">
-      <input className="smps-num-input" type="number" value={imax} step="0.1" min="0" max="1"
+      <input className="smps-num-input" type="number" value={imax} step="0.1" min="0" max="2"
              onChange={e => setImax(e.target.value)} />
       <span className="smps-unit-hint">A</span>
       <Btn onClick={() => onCmd({ i_ref_max: parseFloat(imax) })}>Apply</Btn>

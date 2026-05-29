@@ -24,6 +24,11 @@
 )
 #set par(justify: true, leading: 0.65em)
 
+// Hyperlinks (e.g. bibliography URLs) render in a muted blue, no underline.
+// Only affects `link` elements; figure/section cross-references and citation
+// numbers are `ref`/`cite` elements and stay black.
+#show link: set text(rgb("#1a3e7a"))
+
 // ---------- Heading numbering & styling ----------
 #set heading(numbering: "1.1")
 
@@ -62,13 +67,13 @@
 
   #v(1.2cm)
   #text(size: 12pt)[
-    Dzuldiniy (CID) \
-    Ooi Chun Wen (CID) \
-    Ooi Wei Zen (CID) \
-    Tan Fangnan (CID) \
-    Tan Hong Zhe (02562503) \
-    Tong Yong Zhi (CID) \
-    Wu Yida (CID)
+    Dzuldiniy Hussain Bin Dzulkeflee (CID) \
+    Chun Wen Ooi (CID) \
+    Wei Zen Ooi (02614796) \
+    Fang Nan Tan (CID) \
+    Hong Zhe Tan (02562503) \
+    Yong Zhi Tong (02581094) \
+    Yi Da Wu (02567507)
   ]
 
   #v(0.8cm)
@@ -191,6 +196,13 @@ The system comprises five SMPS modules cooperating on a shared 10V DC bus. Each 
 
 The two grid-facing modules share a common topology (synchronous buck) and a common control law (droop), differing only in their droop setpoints. This is what creates the dead-band around the nominal bus voltage discussed in Section 2.5. The Supercapacitor SMPS departs from droop entirely and runs as a commanded current source, which allows the economic algorithm in Section 9 to use storage as temporal arbitrage rather than as a passive load-sharing element. The LED Load SMPS is internally managed and exposes only its bus-side power draw to the rest of the system.
 
+All four bidirectional modules are physically the same board, the synchronous half-bridge of @fig:smps-stage, carrying a 100µH inductor and a 100mΩ shunt on the Port B side. The distinct roles in the table above are realised entirely by how each board's ports are connected and how its buck/boost switch is set, not by different hardware, so the per-module sections that follow refer back to this single power stage rather than redrawing it.
+
+#figure(
+  image("images/bidirectional_power_stage.png", width: 100%),
+  caption: [Bidirectional SMPS power stage, common to all four modules @clemow_smps.],
+) <fig:smps-stage>
+
 == Overall Microgrid Topology
 
 The complete system is shown in @fig:arch-block. External components sit at the top of the diagram, each connected through their respective SMPS module to the shared 10V DC bus. Every SMPS is driven by a dedicated Pico W microcontroller running its local control loop. A React backend server polls an Azure-hosted web service every 5 seconds for the current demand, price and irradiance signals, computes the dispatch decision documented in Section 9, and pushes setpoint commands to the modules through the ESP32 coordinator. The operator-facing dashboard renders telemetry from the same backend.
@@ -232,11 +244,11 @@ Every term scales with $V_("in")$ or $V_("in")^2$. Inductor ripple also shrinks 
 
 $ Delta I_L = (V_("in") - V_("bus")) dot D dot T / L $
 
-which reduces inductor RMS current and copper loss as a second-order benefit. The net result is that import SMPS efficiency rises monotonically as $V_("in")$ is reduced toward $V_("bus")$.
+which reduces inductor RMS current and copper loss as a second-order benefit. The net result is that import SMPS efficiency rises as $V_("in")$ is reduced toward $V_("bus")$, but only weakly: with matched synchronous FETs the dominant conduction term is independent of $V_("in")$, leaving the modest switching term as the only input-voltage-dependent loss.
 
-The floor on $V_("in")$ is set by dropout. The buck controller must maintain $V_("in") gt.eq V_("bus") + V_("dropout")$ under worst-case bus droop transients, where $V_("dropout")$ is typically 0.5V to 2V depending on controller architecture and inductor sizing. With $V_("bus") = 10$V and a generous 2V dropout budget, the practical minimum is $V_("in") = 12$V. Twelve volts also coincides with the standard lab bench-supply rail, simplifying procurement and connectorisation.
+The binding constraint is therefore not efficiency but dropout. A buck produces $V_("bus")$ at a duty $D = V_("bus") / V_("in")$, which tends to unity as $V_("in")$ approaches $V_("bus")$, yet a real converter cannot reach $D = 1$: a minimum switch off-time, gate-driver refresh requirements, and the controller's maximum-duty clamp all hold the duty below unity. With a maximum duty of roughly 0.9, regulation is lost once $V_("in")$ falls below about $V_("bus") / 0.9 approx 11$V, where the output begins to sag below target. Fixing $V_("in") = 12$V leaves comfortable margin above this floor and coincides with the standard lab bench-supply rail; the marginal efficiency gain from lowering $V_("in")$ further does not justify eroding that margin.
 
-@fig:buck-vin-eff plots this loss model at a fixed 10V bus and 1.5A load. Efficiency is essentially flat across the 11V to 15V range, with conduction loss constant and only the switching term creeping up with input voltage, and collapses sharply once the input falls into the dropout region just above the bus voltage. The chosen 12V operating point sits on the flat plateau with comfortable dropout margin.
+@fig:buck-vin-eff plots this loss model at a fixed 10V bus and 1.5A load. Across the usable 11V to 15V range the modelled efficiency is nearly flat: total loss shifts by only a few tens of milliwatts, around 0.2% of the delivered power, because conduction loss is constant and only the small switching term tracks $V_("in")$. The sharp collapse at the left of the plot is not a loss effect but the dropout region described above, where the converter can no longer regulate, so it marks the unusable input range rather than an inefficient one. The chosen 12V point sits on the flat plateau with comfortable margin above that floor.
 
 #figure(
   image("images/buck_vin_efficiency.png", width: 100%),
@@ -264,6 +276,13 @@ This creates a dead-band $V_("bus") in [9.9, 10.1]$ V in which neither grid-faci
   caption: [Droop curves: module current versus bus voltage.],
 ) <fig:droop-curves>
 
+@fig:busbar-deadband illustrates the same coordination over a load cycle. The bus floats inside the dead-band while supply and demand match, is pulled below 9.9V (where the grid module begins to source) when load exceeds local generation, and is pushed above 10.1V (where the export module begins to dissipate) when generation exceeds load. The small steady-state offsets from each setpoint are the droop error, and the system moves between the three regimes with no mode-change logic.
+
+#figure(
+  image("images/busbar_deadband.png", width: 100%),
+  caption: [Bus voltage and converter currents across import, dead-band and export.],
+) <fig:busbar-deadband>
+
 Choosing droop over mutex maps directly onto the single-point-of-failure mitigation theme introduced in Section 1.2. The communication layer becomes advisory, not safety-critical, and is described next.
 
 == Communication Protocol
@@ -282,14 +301,14 @@ Crucially, the protocol layer sits outside the safety-critical bus-regulation lo
 
 === Topology Selection
 
-The PV panel is an 8W nominal device with an open-circuit voltage of approximately 8.5V and a short-circuit current of approximately 1.0A. Its maximum power point sits near 6.2V at full irradiance and falls with reducing light, as shown by the illustrative single-diode characteristic in @fig:pv-iv. Because the maximum-power voltage (around 6V) is below the 10V bus, energy can only be delivered to the bus by stepping the panel voltage up, so the module runs as a boost converter.
+The PV panel is an 8W nominal device with a nominal open-circuit voltage of approximately 8.5V and a short-circuit current of approximately 1.0A, measured at about 7.9V open-circuit under the solar emulator. Its maximum power point sits near 6.4V at full irradiance and falls toward 5.7V in low light, as the measured I-V and P-V sweeps in @fig:pv-iv show. Each curve was taken by stepping the load current and recording the panel voltage at one of seven emulator dimmer settings. Because the maximum-power voltage (around 6V) is below the 10V bus, energy can only be delivered to the bus by stepping the panel voltage up, so the module runs as a boost converter.
 
 #figure(
-  image("images/pv_iv_curve.png", width: 100%),
-  caption: [Illustrative PV panel I-V and P-V curves with the MPP locus.],
+  image("images/pv_iv_measured.png", width: 100%),
+  caption: [Measured PV panel I-V and P-V curves with the MPP locus.],
 ) <fig:pv-iv>
 
-The boost direction is consistent with the module's hard constraint that Port A must sit above Port B for any energy transfer. The panel is wired to Port B (the lower, variable voltage) and the bus to Port A (the fixed 10V), so current flows from Port B to Port A and the panel always satisfies $V_("A") > V_("B")$. The BU/BO switch is set to BOOST, which also routes the on-board support rail (Pico, current sensor, gate drivers) from Port B; during bench work the Pico is additionally USB-powered, so panel collapse does not reset the controller. Unlike the grid and export buck modules, the boost PWM is not inverted: the firmware writes the duty directly rather than the `65536 - pwm_out` form the buck modules require.
+The boost direction is consistent with the module's hard constraint that Port A must sit above Port B for any energy transfer (the shared power stage is shown in @fig:smps-stage). The panel is wired to Port B (the lower, variable voltage) and the bus to Port A (the fixed 10V), so current flows from Port B to Port A and the panel always satisfies $V_("A") > V_("B")$. The BU/BO switch is set to BOOST, which also routes the on-board support rail (Pico, current sensor, gate drivers) from Port B; during bench work the Pico is additionally USB-powered, so panel collapse does not reset the controller. Unlike the grid and export buck modules, the boost PWM is not inverted: the firmware writes the duty directly rather than the `65536 - pwm_out` form the buck modules require.
 
 Current is sensed by the INA219 across the 0.10 ohm shunt at Port B. The shunt is physically wired in the Port A to Port B sense direction, so the firmware negates the reading: a positive inductor current then corresponds to panel-to-bus boost flow. The control structure is a cascaded pair, an outer voltage PI that servoes the panel voltage to the commanded $V_("mpp")$ and an inner current PI that drives the duty, with the operating point set by whichever MPPT strategy is active.
 
@@ -297,13 +316,16 @@ Current is sensed by the INA219 across the 0.10 ohm shunt at Port B. The shunt i
 
 Three approaches for maximum power point tracking were considered: a static constant-voltage operating point, an irradiance-indexed lookup table, and online Perturb and Observe (P&O) gradient ascent. The constant-voltage approach was discarded because the panel's $V_("mpp")$ shifts with both irradiance and temperature; a single $V_("mpp")$ setpoint loses 10 to 20% of available harvest in low light. The two remaining methods were prototyped against each other and made user-selectable from the host dashboard so that Section 3.3 can present a quantitative comparison rather than commit to a single shipped strategy.
 
-The lookup table method exploits the externally available irradiance signal. The PV module fetches the current sun value from the Azure-hosted `/sun` endpoint every five seconds, normalises to a fraction in $[0, 1]$, and interpolates against a piecewise-linear $V_("mpp")$ versus irradiance table built from a prior IV characterisation sweep. Vmpp entries range from 5.65 V at 10% irradiance to 6.43 V at full sun. Settling is immediate because the new $V_("mpp")$ is commanded as a step input to the existing outer voltage PI. The costs are the prior characterisation effort and the dependency on the web link remaining alive; if the link drops, the firmware degrades gracefully by holding the last good irradiance value rather than commanding an arbitrary fallback.
+The lookup table method exploits the externally available irradiance signal. The PV module fetches the current sun value from the Azure-hosted `/sun` endpoint every five seconds, normalises to a fraction in $[0, 1]$, and interpolates against a piecewise-linear $V_("mpp")$ versus irradiance table built from the characterisation sweeps of @fig:pv-iv. The extracted maximum-power points are plotted against irradiance in @fig:pv-vmpp, and these values, ranging from 5.65V at 10% irradiance to 6.43V at full sun, are exactly the entries loaded into the firmware table. Settling is immediate because the new $V_("mpp")$ is commanded as a step input to the existing outer voltage PI. The costs are the prior characterisation effort and the dependency on the web link remaining alive; if the link drops, the firmware degrades gracefully by holding the last good irradiance value rather than commanding an arbitrary fallback.
+
+#figure(
+  image("images/pv_vmpp_irradiance.png", width: 78%),
+  caption: [Measured Vmpp and Pmax versus irradiance: the MPPT lookup table.],
+) <fig:pv-vmpp>
 
 P&O makes no assumption about $V_("mpp")$. The algorithm perturbs the commanded $V_("mpp")$ by a small fixed step, measures the resulting power averaged over a settling window, compares to the previous window, and either keeps or reverses the perturbation direction. With no irradiance sensor required, P&O is inherently more robust against web link outages or unmodelled panel behaviour, at the cost of continuous oscillation around the peak and slower convergence after rapid irradiance steps. The literature on P&O cautions that naive implementations using a single instantaneous power sample per perturbation collapse into noise-driven random walks when the per-sample noise exceeds the curvature of the $P(V_("mpp"))$ surface near the peak; the bench-noise floor (Section 3.2) made this an active concern that shaped the implementation.
 
 Implementing both, rather than committing to one, is driven by the marking rubric's emphasis on quantitative evaluation. Shipping both also leaves the system robust to single-method failure: a web link outage degrades from web-lookup to fixed-mode with no firmware change.
-
-=== Component Sizing
 
 === LTspice / Python Simulation
 
@@ -359,7 +381,7 @@ A future-work extension is to automate the cap-as-calibrated-load approach again
 
 === Boost Topology and Boot-with-Empty-Cap Rationale
 
-The supercapacitor bank is the only variable-voltage element on the storage side, swinging between 10.5V when depleted and 17.5V when full. The same Port A above Port B transfer rule that fixed the PV topology dictates the port assignment here: the cap is the higher and variable rail and must sit on Port A, with the fixed 10V bus on Port B. Energy then flows from bus to cap (Port B to Port A) when charging and from cap to bus (Port A to Port B) when discharging, so the module is genuinely bidirectional rather than a one-way source or sink.
+The supercapacitor bank is the only variable-voltage element on the storage side, swinging between 10.5V when depleted and 17.5V when full. The same Port A above Port B transfer rule that fixed the PV topology dictates the port assignment here (the shared power stage is @fig:smps-stage): the cap is the higher and variable rail and must sit on Port A, with the fixed 10V bus on Port B. Energy then flows from bus to cap (Port B to Port A) when charging and from cap to bus (Port A to Port B) when discharging, so the module is genuinely bidirectional rather than a one-way source or sink.
 
 The BU/BO switch is set to BOOST, which is the load-bearing decision for robustness. With BOOST selected, the on-board support circuitry draws from Port B, the bus, which is always energised by the grid and PV modules. The board therefore boots and stays alive even when the cap is fully empty at 0V. The alternative BUCK setting would power the support rail from Port A, the cap, and would brick the controller whenever the cap fell below the 6V to 7V minimum support voltage, which is precisely the depleted state from which the system most needs to recover. As with the PV boost module, the PWM is not inverted. The current sign convention follows the PV module: a positive inductor current means charging (bus to cap), a negative current means discharging (cap to bus), and the dashboard command $i_("cmd")$ is signed accordingly.
 
@@ -372,7 +394,7 @@ The usable voltage window falls out of three hard limits, illustrated against th
   caption: [Supercapacitor stored energy and usable operating window.],
 ) <fig:supercap-energy>
 
-In firmware the practical charge ceiling is lowered to 15.7V, kept clear of a region near 16V where the SMPS misbehaves, and a soft taper zeroes the current over the last 0.5V at each edge to avoid slamming into the hard limits. The energy genuinely cycled between 10.5V and 15.7V is approximately 34J of the roughly 49J the full window would hold. A significant practical complication is the bank's approximately 4 ohm equivalent series resistance: immediately after a current step the terminal voltage is dominated by the resistive drop and charge redistribution, so it is an unreliable proxy for state of charge until it settles. This directly shapes the cycle-test settle phases described in Section 4.3, which read the open-circuit voltage only after a deliberate pause. Peak current is clamped to 0.30A, leaving a 50mA margin under the 350mA five-second datasheet rating.
+In firmware the practical charge ceiling is lowered to 15.7V, kept clear of a region near 16V where the SMPS misbehaves, and a soft taper zeroes the current over the last 0.5V at each edge to avoid slamming into the hard limits. The energy genuinely cycled between 10.5V and 15.7V is approximately 34J of the roughly 49J the full window would hold. A significant practical complication is the bank's approximately 4 ohm equivalent series resistance: immediately after a current step the terminal voltage is dominated by the resistive drop and charge redistribution, so it is an unreliable proxy for state of charge until it settles. This directly shapes the cycle-test settle phases described in Section 4.3, which read the open-circuit voltage only after a deliberate pause. Peak current is clamped to 0.30A, leaving a 50mA margin under the 380mA five-second datasheet rating @cd_dsm_datasheet.
 
 === Command-Driven CC: Rationale for the Departure
 
@@ -446,17 +468,17 @@ The cap cycle test also doubles as a calibration reference for the future-work a
 
 === Topology Choice
 
-Both grid-facing modules are configured as synchronous buck converters with the BU/BO switch set to BUCK, but their port assignments mirror their opposite roles. The import module places the 12V bench PSU on Port A and the bus on Port B, stepping 12V down to the 10V bus and sourcing current into it; it cannot push current back into the PSU, so its current reference is clamped to non-negative values. The export module places the bus on Port A and a dummy resistor bank on Port B, stepping the bus down into the resistor to dissipate surplus energy; its current reference is likewise clamped non-negative. Both satisfy the Port A above Port B rule by construction.
+Both grid-facing modules are configured as synchronous buck converters with the BU/BO switch set to BUCK (the shared power stage is @fig:smps-stage), but their port assignments mirror their opposite roles. The import module places the 12V bench PSU on Port A and the bus on Port B, stepping 12V down to the 10V bus and sourcing current into it; it cannot push current back into the PSU, so its current reference is clamped to non-negative values. The export module places the bus on Port A and a dummy resistor bank on Port B, stepping the bus down into the resistor to dissipate surplus energy; its current reference is likewise clamped non-negative. Both satisfy the Port A above Port B rule by construction.
 
 Because the gate driver on these modules inverts, the buck duty is written as `65536 - pwm_out`, the opposite of the PV and supercap boost convention, and the safe state writes a full-scale duty so the MOSFET is held off. Current is sensed by the shared INA219 driver across the 0.10 ohm Port B shunt. The choice of a dummy resistor as the export sink follows the brief's guidance: driving current into a bench PSU causes its current to collapse and its terminal voltage to rise, so a resistor sized to sink the maximum export current without exceeding its voltage limit is used in place of true reverse feed.
 
+The resistance follows from the worst-case exportable surplus. The most the bus could ever need to shed is full photovoltaic harvest plus peak supercapacitor discharge: two panels in parallel supply under 6W, and the supercapacitor at its 17.5V ceiling and 0.76A absolute peak discharge @cd_dsm_datasheet adds about 13W, so the surplus stays under 20W. Because the export converter bucks from the 10V bus, the dissipating voltage cannot exceed the bus, so shedding 20W needs a current of $P / V = 20 / 10 = 2$A and a load of $V / I = 10 / 2 = 5$ ohm. The dummy load is therefore a 5 ohm bank and the inductor-current reference is capped at 2A, the point at which the 10V and 2A limits coincide at the 20W corner, and which sits under the module's 2.8A firmware overcurrent trip.
+
 === Droop Setpoints: 9.9 V Import and 10.1 V Export
 
-Each module runs a cascaded controller: an outer bus-voltage PI produces a current reference, and an inner current PI servoes the inductor current to it. The two modules differ only in the sign of the voltage error. The import module computes $v_("err") = V_("target") - V_("bus")$, so it sources more current the further the bus falls below its 9.9V setpoint. The export module computes $v_("err") = V_("bus") - V_("target")$, the sign flipped, so it dissipates more the further the bus rises above its 10.1V setpoint. Each reference is clamped to a non-negative cap, 2.0A for import (approximately 20W) and 1.0A for export (approximately 10W), the asymmetry reflecting that the system imports more readily than it dumps.
+Each module runs a cascaded controller: an outer bus-voltage PI produces a current reference, and an inner current PI servoes the inductor current to it. The two modules differ only in the sign of the voltage error. The import module computes $v_("err") = V_("target") - V_("bus")$, so it sources more current the further the bus falls below its 9.9V setpoint. The export module computes $v_("err") = V_("bus") - V_("target")$, the sign flipped, so it dissipates more the further the bus rises above its 10.1V setpoint. Each reference is clamped to a non-negative cap of 2.0A on both modules (approximately 20W at the bus), the export value set by the worst-case surplus analysis in Section 5.1.1 and the import value by the grid interface rating.
 
 Placing the import setpoint below the export setpoint creates the 0.2V dead-band from 9.9V to 10.1V in which neither module acts, the mechanism analysed at system level in Section 2.6. A setpoint of 0.1V or below, or a disable command, is treated as fully off, which is how a higher-level scheduler hands the bus entirely to one side. During bring-up a deliberately wider band was used, with the import target lowered and the export target raised, to stay tolerant of untuned loops and residual noise before narrowing to the final 9.9V and 10.1V once the loops were stable.
-
-=== Component Sizing
 
 === Simulation
 
@@ -492,13 +514,16 @@ This is an experimental simplification specific to the assessed metric, and is a
 
 === Topology
 
-The LED load is a triple driver assembly: three independent buck channels (red, yellow, green), each a cut-down SMPS driving a roughly 3W, 1A LED, all controlled by a single Pico W. Buck is the natural choice because an LED forward voltage of around 3V is well below the 10V bus, so the bus is stepped down into each string. The hardware differs from the bidirectional modules in two ways that the firmware must respect. Current is sensed not by an INA219 but by an external SPI ADC of the MCP3208 family, reading three current channels and three voltage channels through one chip select, and the shunt is 0.33 ohm rather than 0.10 ohm, so the inductor current is recovered as $i_("L") = 3 dot V_("shunt")$. Each channel also has a dedicated enable pin that must be driven high on every tick, since the gate driver gates the PWM off whenever its enable is low. The LED forward voltage is reconstructed from the two ADC reads as $v_("LED") = 2 dot v_("v,pin") - v_("i,pin")$, correcting for the sense divider and the shunt drop.
+The LED load is a triple driver assembly: three independent buck channels (red, yellow, green), each a cut-down SMPS driving a roughly 3W, 1A LED, all controlled by a single Pico W. Buck is the natural choice because an LED forward voltage of around 3V is well below the 10V bus, so the bus is stepped down into each string. The hardware differs from the bidirectional modules in two ways that the firmware must respect. Current is sensed not by an INA219 but by an external SPI ADC of the MCP3208 family, reading three current channels and three voltage channels through one chip select, and the shunt is 0.33 ohm rather than 0.10 ohm, so the inductor current is recovered as $i_("L") = 3 dot V_("shunt")$. Each channel also has a dedicated enable pin that must be driven high on every tick, since the gate driver gates the PWM off whenever its enable is low. The LED forward voltage is reconstructed from the two ADC reads as $v_("LED") = 2 dot v_("v,pin") - v_("i,pin")$, correcting for the sense divider and the shunt drop. One of the three identical driver channels is shown in @fig:led-driver.
+
+#figure(
+  image("images/LED_driver.png", width: 92%),
+  caption: [LED buck driver power stage, one of three identical channels @clemow_led.],
+) <fig:led-driver>
 
 === Control Mode: CC vs Commanded Power
 
 An LED behaves approximately as a fixed-voltage device, so its power is set by controlling current, which makes a current-controlled inner loop the only sensible drive. The demand from the web server, however, arrives as a power figure, so each channel runs in a commanded-power mode realised through constant current: the demanded power is divided by the measured forward voltage to give a current reference, $i_("ref") = P_("demand") / v_("LED")$, which a per-channel current PI then tracks. The reference is clamped to the channel ratings, 3.0W and 1.05A, and a forward-voltage floor guards the division when a string is dark. When the demanded power for a channel is zero the enable pin is dropped and that channel's PI is reset, preventing the integrator from winding up while the channel is meant to be off.
-
-=== Component Sizing
 
 === Simulation
 
@@ -526,11 +551,16 @@ The decision to leave LED Load SMPS efficiency uncharacterised is therefore corr
 
 The system uses two current-sensing platforms plus a light sensor, each matched to its module. The four bidirectional modules (PV, grid, export, supercap) sense current with an INA219 over I2C across a 0.10 ohm shunt on the Port B positive line. The INA219 suits these modules because their current is genuinely bidirectional, the charge and discharge of the cap and the import and export of the grid all require a signed reading, and because its programmable internal averaging and dedicated 16-bit shunt path give a quiet current signal without consuming Pico ADC channels. The calibration register is deliberately left at zero: rather than trust the chip's internal current scaling, the firmware reads the raw shunt voltage and divides by the known shunt resistance itself, which keeps the current scale traceable to a single resistor value.
 
-The triple LED driver instead inherits an external SPI ADC of the MCP3208 family from the lab reference design, reading three current and three voltage channels across a 0.33 ohm shunt. The LED current only ever flows one way, so the simpler unidirectional ADC is sufficient, and using SPI keeps the three channels independent and the I2C bus free. Finally, irradiance is measured by a light-dependent resistor on a separate ESP32 module, added because all three Pico ADC pins on the bidirectional boards are already committed to on-board signals. Bus and port voltages on every module are read through the Pico's own ADC via a resistive divider, independent of whichever current sensor the module uses.
+The triple LED driver instead inherits an external SPI ADC of the MCP3208 family from the lab reference design, reading three current and three voltage channels across a 0.33 ohm shunt. The LED current only ever flows one way, so the simpler unidirectional ADC is sufficient, and using SPI keeps the three channels independent and the I2C bus free. Finally, irradiance is measured by a light-dependent resistor on a separate ESP32 module, added because all three Pico ADC pins on the bidirectional boards are already committed to on-board signals. Bus and port voltages on every module are read through the Pico's own ADC via a resistive divider, independent of whichever current sensor the module uses. @fig:smps-control shows the controller interface common to the bidirectional modules: the BU/BO switch that selects which port feeds the support-rail regulator, the I2C link to the INA219, the divided Port A and Port B reads on the Pico ADC, and the PWM path through a deadtime generator and gate driver to the two MOSFETs.
+
+#figure(
+  image("images/smps_control_diagram.png", width: 100%),
+  caption: [Pico controller, sensing and gate-drive interface for the bidirectional SMPS @clemow_control.],
+) <fig:smps-control>
 
 == Calibration
 
-Voltage readings are scaled by the resistive divider ratio and the 3.3V ADC reference, of the form $V = (12490 / 2490) dot 3.3 dot ("raw" / 65536)$. Small per-channel trim factors near unity (1.017 and 1.015 on the PV and supercap reads) were applied to null residual divider and reference error measured against a bench multimeter. Current calibration on the bidirectional modules reduces to the single shunt value of 0.10 ohm, since the INA219 calibration register is zeroed and the shunt voltage is converted in firmware; the PGA is set for a plus or minus 320mV shunt range. The LED driver uses its own 2.497V ADC reference and the $i_("L") = 3 dot V_("shunt")$ scaling for the 0.33 ohm shunt.
+Voltage readings are scaled by the resistive divider ratio and the 3.3V ADC reference, of the form $V = (12490 / 2490) dot 3.3 dot ("raw" / 65536)$. Small per-channel trim factors near unity (1.017 and 1.015 on the PV and supercap reads) were applied to null residual divider and reference error measured against a bench multimeter. Current calibration on the bidirectional modules reduces to the single shunt value of 0.10 ohm, since the INA219 calibration register is zeroed and the shunt voltage is converted in firmware; the PGA is set for a plus or minus 320mV shunt range, which across the 0.10 ohm shunt gives a current measurement ceiling of plus or minus 3.2A. The firmware overcurrent trip is placed at 2.8A, just inside this ceiling so that it fires on a valid reading rather than a saturated one, and well under the module's 5A board rating. The LED driver uses its own 2.497V ADC reference and the $i_("L") = 3 dot V_("shunt")$ scaling for the 0.33 ohm shunt.
 
 The irradiance sensor uses a two-point calibration captured from the dashboard: one reading with the lamp off sets the dark point and one at full brightness sets the bright point, and the LDR voltage is then mapped linearly to an irradiance fraction. The two points are persisted in the ESP32's non-volatile storage so the calibration survives a reboot.
 
