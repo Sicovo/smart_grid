@@ -290,6 +290,124 @@ body {
   background: #00f0ff;
 }
 
+.naive-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.naive-item {
+  background-color: rgba(255, 255, 255, 0.03);
+  border: 1px solid #2d2350;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.naive-item p {
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  color: #a69ec4;
+}
+
+.naive-item h3 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.naive-meta {
+  margin: 12px 0 0 0;
+  color: #a69ec4;
+  font-size: 12px;
+}
+
+.naive-toolbar {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.naive-auto-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #a69ec4;
+}
+
+.naive-cooldown-input {
+  width: 64px;
+  border: 1px solid #2d2350;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #fff;
+  padding: 6px;
+}
+
+.naive-host-toggle,
+.naive-host-save {
+  border: 1px solid #2d2350;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.naive-host-panel {
+  margin-top: 12px;
+  border: 1px solid #2d2350;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px;
+}
+
+.naive-host-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.naive-host-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #a69ec4;
+}
+
+.naive-host-grid input {
+  border: 1px solid #2d2350;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  padding: 8px;
+}
+
+.naive-host-actions {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.naive-host-msg {
+  font-size: 12px;
+  color: #00f0ff;
+}
+
+.naive-apply-msg {
+  margin: 10px 0 0 0;
+  font-size: 13px;
+  color: #00f0ff;
+}
+
+.btn-pink:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* 响应式 */
 @media (max-width: 900px) {
   .app-layout {
@@ -306,6 +424,14 @@ body {
   .sidebar-brand { margin: 0; }
   .main-content {
     padding: 20px;
+  }
+
+  .naive-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .naive-host-grid {
+    grid-template-columns: 1fr;
   }
 }
 

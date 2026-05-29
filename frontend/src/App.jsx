@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Line,
   XAxis,
@@ -41,13 +41,23 @@ function App() {
   const [latest, setLatest] = useState(null);
   const [snapshots, setSnapshots] = useState([]);
   const [modules, setModules] = useState({});
+  const [naive, setNaive] = useState(null);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyMsg, setApplyMsg] = useState("");
+  const [showHostConfig, setShowHostConfig] = useState(false);
+  const [backendHosts, setBackendHosts] = useState({ cap: "", led: "" });
+  const [hostsMsg, setHostsMsg] = useState("");
+  const [autoApply, setAutoApply] = useState(false);
+  const [cooldownSec, setCooldownSec] = useState(5);
+  const lastAutoApplyRef = useRef(0);
 
   async function fetchData() {
     try {
-      const [latestRes, snapshotsRes, modulesRes] = await Promise.all([
+      const [latestRes, snapshotsRes, modulesRes, naiveRes] = await Promise.all([
         fetch(`${API_BASE}/latest`),
         fetch(`${API_BASE}/snapshots?limit=50`),
         fetch(`${API_BASE}/modules/latest`),
+        fetch(`${API_BASE}/algo/naive`),
       ]);
 
       if (!latestRes.ok || !snapshotsRes.ok) {
@@ -60,23 +70,128 @@ function App() {
       ]);
 
       const modulesData = modulesRes.ok ? await modulesRes.json() : {};
+      const naiveData = naiveRes.ok ? await naiveRes.json() : null;
 
       setLatest(latestData?.error ? null : latestData);
       setSnapshots(Array.isArray(snapshotsData) ? snapshotsData : []);
       setModules(modulesData || {});
+      setNaive(naiveData && !naiveData.error ? naiveData : null);
     } catch (err) {
       console.error("Failed to fetch dashboard data", err);
       setLatest(null);
       setSnapshots([]);
       setModules({});
+      setNaive(null);
+    }
+  }
+
+  async function applyNaiveNow(opts = {}) {
+    const { silent = false } = opts;
+
+    if (applyBusy) return false;
+
+    setApplyBusy(true);
+    if (!silent) {
+      setApplyMsg("");
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/algo/naive/apply`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        throw new Error(`Apply request failed: ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (data?.recommendation) {
+        setNaive(data.recommendation);
+      }
+
+      if (!silent) {
+        const capState = data?.applied?.cap?.ok ? "cap ok" : "cap failed";
+        const ledState = data?.applied?.led?.ok ? "led ok" : "led failed";
+        setApplyMsg(`${capState}, ${ledState}`);
+      }
+      return true;
+    } catch (err) {
+      console.error("Failed to apply naive command", err);
+      if (!silent) {
+        setApplyMsg("apply failed");
+      }
+      return false;
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
+  async function loadBackendHosts() {
+    try {
+      const res = await fetch(`${API_BASE}/algo/module-hosts`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const hosts = data?.hosts || {};
+      setBackendHosts({
+        cap: hosts.cap || "",
+        led: hosts.led || "",
+      });
+    } catch (err) {
+      console.error("Failed to load backend hosts", err);
+    }
+  }
+
+  async function saveBackendHosts() {
+    setHostsMsg("");
+    try {
+      const payload = {
+        hosts: {
+          cap: backendHosts.cap || "",
+          led: backendHosts.led || "",
+        },
+      };
+
+      const res = await fetch(`${API_BASE}/algo/module-hosts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        throw new Error(`save failed ${res.status}`);
+      }
+
+      setHostsMsg("hosts saved");
+    } catch (err) {
+      console.error("Failed to save backend hosts", err);
+      setHostsMsg("save failed");
     }
   }
 
   useEffect(() => {
+    loadBackendHosts();
     fetchData();
     const interval = setInterval(fetchData, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!autoApply) return;
+
+    const id = setInterval(() => {
+      if (activeView !== "energy") return;
+      if (!naive || applyBusy) return;
+
+      const cooldownMs = Math.max(1, Number(cooldownSec) || 1) * 1000;
+      const now = Date.now();
+      if (now - lastAutoApplyRef.current < cooldownMs) return;
+
+      lastAutoApplyRef.current = now;
+      applyNaiveNow({ silent: true });
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [autoApply, cooldownSec, activeView, naive, applyBusy]);
 
   return (
     <div className="app-layout">
@@ -241,6 +356,98 @@ function App() {
                   </h3>
                 </div>
               </div>
+            </section>
+
+            <section className="card">
+              <div className="card-header">
+                <span className="icon-green">●</span> Naive Dispatch
+              </div>
+
+              <div className="naive-grid">
+                <div className="naive-item">
+                  <p>PV Power</p>
+                  <h3>{typeof naive?.inputs?.pv_power_W === "number" ? `${naive.inputs.pv_power_W.toFixed(2)} W` : "-"}</h3>
+                </div>
+                <div className="naive-item">
+                  <p>Demand</p>
+                  <h3>{typeof naive?.inputs?.demand_W === "number" ? `${naive.inputs.demand_W.toFixed(2)} W` : "-"}</h3>
+                </div>
+                <div className="naive-item">
+                  <p>Cap i_cmd</p>
+                  <h3>{typeof naive?.suggested?.cap?.i_cmd === "number" ? `${naive.suggested.cap.i_cmd.toFixed(3)} A` : "-"}</h3>
+                </div>
+                <div className="naive-item">
+                  <p>LED each</p>
+                  <h3>{typeof naive?.suggested?.led?.p_red === "number" ? `${naive.suggested.led.p_red.toFixed(2)} W` : "-"}</h3>
+                </div>
+              </div>
+
+              <p className="naive-meta">
+                Served deferables: {Array.isArray(naive?.served_deferrables) ? naive.served_deferrables.length : 0}
+                {" · "}
+                Remaining surplus: {typeof naive?.remaining_surplus_W === "number" ? `${naive.remaining_surplus_W.toFixed(2)} W` : "-"}
+              </p>
+
+              <div className="naive-toolbar">
+                <label className="naive-auto-label">
+                  <input
+                    type="checkbox"
+                    checked={autoApply}
+                    onChange={(e) => setAutoApply(e.target.checked)}
+                  />
+                  Auto apply
+                </label>
+
+                <label className="naive-auto-label">
+                  Cooldown
+                  <input
+                    className="naive-cooldown-input"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={cooldownSec}
+                    onChange={(e) => setCooldownSec(Number(e.target.value) || 1)}
+                  />
+                  s
+                </label>
+
+                <button className="naive-host-toggle" onClick={() => setShowHostConfig((v) => !v)}>
+                  {showHostConfig ? "Hide backend hosts" : "Edit backend hosts"}
+                </button>
+              </div>
+
+              {showHostConfig && (
+                <div className="naive-host-panel">
+                  <div className="naive-host-grid">
+                    <label>
+                      cap
+                      <input
+                        value={backendHosts.cap}
+                        onChange={(e) => setBackendHosts((h) => ({ ...h, cap: e.target.value }))}
+                        placeholder="http://192.168.137.23"
+                      />
+                    </label>
+                    <label>
+                      led
+                      <input
+                        value={backendHosts.led}
+                        onChange={(e) => setBackendHosts((h) => ({ ...h, led: e.target.value }))}
+                        placeholder="http://192.168.137.24"
+                      />
+                    </label>
+                  </div>
+                  <div className="naive-host-actions">
+                    <button className="naive-host-save" onClick={saveBackendHosts}>Save backend hosts</button>
+                    {hostsMsg && <span className="naive-host-msg">{hostsMsg}</span>}
+                  </div>
+                </div>
+              )}
+
+              <button className="btn-pink" onClick={applyNaiveNow} disabled={applyBusy || !naive}>
+                {applyBusy ? "Applying..." : "Apply to cap + led modules"}
+              </button>
+
+              {applyMsg && <p className="naive-apply-msg">{applyMsg}</p>}
             </section>
 
             <section className="card">
