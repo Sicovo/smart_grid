@@ -1141,12 +1141,11 @@ textarea {
 }
 
 .hero-octopus {
-  position: absolute;
-  top: 96px;
-  right: 72px;
+  position: static;
   width: 130px;
   height: 130px;
-  z-index: 5;
+  margin: 0 auto 28px;
+  z-index: auto;
 }
 
 .hero-octopus-lottie {
