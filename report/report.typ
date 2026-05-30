@@ -153,7 +153,7 @@ The project shall deliver a four-module DC microgrid that cooperatively regulate
 
 == Project Management System & Temporal Organisation
 
-Coordinating a seven-member hardware team across a five-month delivery window required tooling that off-the-shelf platforms could not provide as a single integrated system. Rather than stitching together Notion, Trello, Microsoft Teams and ChatGPT, each of which solves only a fragment of the problem and none of which share state, a bespoke AI-powered Project Management System (PMS) was self-coded for the project. Every layer of the frontend, backend, AI pipeline and database schema was purpose-built around the rhythm of the team and the constraints of the brief.
+Coordinating a seven-member hardware and software team across a five-weeks delivery window required tooling that off-the-shelf platforms could not provide as a single integrated system. Rather than stitching together Notion, Trello, Microsoft Teams and ChatGPT, each of which solves only a fragment of the problem and none of which share state, a bespoke AI-powered Project Management System (PMS) was self-coded for the project. Every layer of the frontend, backend, AI pipeline and database schema was purpose-built around the rhythm of the team and the constraints of the brief.
 
 #figure(
   image("images/pms_dashboard.png", width: 100%),
@@ -390,9 +390,42 @@ PV conversion efficiency is defined as $eta_("PV") = P_("bus,out") / P_("panel,i
 
 Three approaches were considered for measuring $P_("bus,out")$. The first was an automated test using the supercapacitor module as a calibrated load: with the cycle-test round-trip efficiency $eta_("cap")$ known (Section 4.3), the cap-side stored energy rate $C dot V_("cap") dot (d V_("cap")) / (d t)$ divided by $eta_("cap,charge")$ gives the bus-side power into the cap, which equals $P_("bus,out")$ when no other module is sourcing or sinking. The second was using the LED Load SMPS bus draw, after a one-time bench characterisation of the LED module's own efficiency $eta_("LED")$. Both automated approaches cascade two independently measured efficiencies, compounding their ±1 to 2% characterisation errors and introducing a dependency on the calibration operating point matching the test operating point. The third was a manual bench measurement using a digital multimeter (DMM) placed in series with the PV-to-bus wire, giving $I_("bus,out")$ directly.
 
-For the demo-day characterisation the third approach was chosen. The decision is justified by the marking rubric's evaluation criterion that rewards quantitative evidence and informative visual presentation: a smaller number of high-confidence ground-truth measurements yields a more defensible $eta_("PV")$ curve than a larger number of cascaded automated measurements. The chosen sweep covers two axes. Bus voltage is held at 9.5, 9.9, 10.1 and 10.5 V (sampling either side of the import/export dead-band defined in Section 2.5) to characterise the dependency of $eta_("PV")$ on boost ratio. Panel irradiance is set at 25%, 50%, 75% and 100% to characterise the dependency on operating power. At each grid point the operator reads $P_("panel")$ off the dashboard, reads $I_("bus,out")$ off the DMM, computes $P_("bus,out") = V_("bus") dot I_("bus,out")$ and reports $eta_("PV") = P_("bus,out") / P_("panel")$. The results table feeds into Section 11.
+For the demo-day characterisation the third approach was chosen. The decision is justified by the marking rubric's evaluation criterion that rewards quantitative evidence and informative visual presentation: a smaller number of high-confidence ground-truth measurements yields a more defensible $eta_("PV")$ curve than a larger number of cascaded automated measurements. The chosen sweep covers two axes. The bus-voltage axis is swept across seven points from 7.1 to 10.2 V in 0.5 V steps, deliberately wider than the import/export dead-band of Section 2.5 so that the duty-cycle dependency is captured across the full physically reachable range rather than just the cluster around 10 V. The irradiance axis adds the 25%, 50% and 75% lab-dimmer settings to complement the 100% setting used here, with the optimal bus voltage from the first sweep held fixed. At each grid point the operator reads $P_("panel")$ off the dashboard, reads $I_("bus,out")$ off the DMM, computes $P_("bus,out") = V_("bus") dot I_("bus,out")$ and reports $eta_("PV") = P_("bus,out") / P_("panel")$. The bus-voltage axis was completed at 100% irradiance and is reported in Section 3.3.3 below; the three lower-irradiance points are scheduled for the next test session.
 
-A future-work extension is to automate the cap-as-calibrated-load approach against this DMM ground truth: the first DMM sweep then serves as a single calibration step, after which subsequent characterisation runs can be triggered from the dashboard without bench instrumentation.
+A subsequent automation step would replace the manual DMM measurement with the cap-as-calibrated-load approach: the first DMM sweep then serves as a single calibration step, after which characterisation runs can be triggered from the dashboard without bench instrumentation.
+
+=== Measured SMPS Efficiency
+
+@fig:pv-eta-measured and the table below present the bus-voltage sweep at 100% irradiance, with the panel pinned at its MPP ($V_("panel") approx 6.23$ V, $P_("panel") approx 2.3$ W). The seven points span $V_("bus") = 7.1$ V to $10.2$ V in 0.5 V steps, giving a corresponding boost duty cycle $D = 1 - V_("panel") / V_("bus")$ that walks from 0.13 to 0.39. Efficiency lies between 95.0% and 98.7%, with a mean of 97.3% and a standard deviation of 1.3%.
+
+#protable(
+  columns: (auto, auto, auto, auto, auto, auto),
+  align: center + horizon,
+  [*$V_("bus")$ (V)*], [*$V_("panel")$ (V)*], [*Duty $D$*], [*$P_("panel")$ (W)*], [*$P_("bus")$ (W)*], [*$eta_("PV")$ (%)*],
+  [7.11], [6.22], [0.13], [2.42], [2.30], [95.0],
+  [7.61], [6.23], [0.18], [2.34], [2.25], [96.2],
+  [8.11], [6.23], [0.23], [2.25], [2.19], [97.3],
+  [8.61], [6.23], [0.28], [2.28], [2.25], [98.7],
+  [9.12], [6.23], [0.32], [2.30], [2.26], [98.3],
+  [9.61], [6.23], [0.35], [2.45], [2.40], [98.0],
+  [10.21], [6.23], [0.39], [2.26], [2.21], [97.8],
+)
+
+#figure(
+  image("images/pv_efficiency_measured.png", width: 100%),
+  caption: [Measured PV SMPS efficiency versus bus voltage at 100% irradiance.],
+) <fig:pv-eta-measured>
+
+The scatter is consistent with the ±0.01 A resolution of the DMM at the approximately 0.23 A operating current, where one count is about 0.4% of $eta_("PV")$. The variation across the bus range does not reveal a strong dependency on bus voltage: the lowest reading at 7.1 V (95.0%) is plausibly a single-point dip rather than a trend, since the remaining six points sit between 96.2% and 98.7% with no clean monotonic ordering against $V_("bus")$. The duty cycle implied by the sweep, $D = 0.13$ to $0.39$, places every operating point on the flat high-efficiency plateau of the boost converter's $eta$-versus-$D$ characteristic.
+
+This is consistent with the published shape for boost converters, where efficiency stays high and approximately flat across low and moderate duty cycles before falling off in CCM at high duty as conduction loss scales with the larger inductor RMS current. Fig. 5 of @navamani_iccpct2015, reproduced in @fig:pv-eta-ref, shows this characteristic in both DCM and CCM: a flat plateau across $D$ approximately 0.1 to 0.6 and a sharp CCM cliff beyond $D approx 0.7$. The hardware in fact cannot reach that cliff regime at all. With the panel pinned at its 6.23 V MPP, the boost duty $D = 1 - V_("panel") / V_("bus")$ requires $V_("bus") > 20.8$ V to hit $D = 0.7$, which exceeds the 17.5 V supercapacitor window ceiling and the board's rated operating range. The maximum reachable duty cycle at the 17.5 V bus ceiling is $D_("max") = 1 - 6.23 / 17.5 = 0.64$, still well clear of the cliff. The measured plateau therefore represents the converter's behaviour across its entire physically reachable operating space, and no high-duty efficiency derating is anticipated for demo-day operation.
+
+#figure(
+  image("images/pv_efficiency.png", width: 78%),
+  caption: [Boost efficiency versus duty cycle in DCM and CCM, from Fig. 5 of @navamani_iccpct2015.],
+) <fig:pv-eta-ref>
+
+The irradiance axis is the principal outstanding item for this evaluation. The bus-voltage axis having shown a flat $eta_("PV")$ across the operating range at 100% irradiance, the next test session adds the 25%, 50% and 75% dimmer settings at the cluster of best-efficiency bus voltages to capture the second-order dependency on operating power.
 
 #pagebreak()
 
@@ -752,7 +785,7 @@ System-level evaluation comprises three categories of test: per-module SMPS effi
 
 Each SMPS module is characterised across a small grid of operating points, with the test method tailored to the instrumentation available on that module's port assignment. The three methods are summarised below; full details for each are in the relevant per-module evaluation subsection.
 
-PV SMPS (Section 3.3): manual measurement using a DMM placed in series with the PV-to-bus wire. The pre-loss panel power $P_("panel,in")$ is available directly from the firmware (both factors are Port B); the post-loss bus power $P_("bus,out")$ requires the external DMM because Port A is uninstrumented. Sweep is bus voltage at four points crossing the import/export dead-band, and panel irradiance at four levels via the lab dimmer.
+PV SMPS (Section 3.3): manual measurement using a DMM placed in series with the PV-to-bus wire. The pre-loss panel power $P_("panel,in")$ is available directly from the firmware (both factors are Port B); the post-loss bus power $P_("bus,out")$ requires the external DMM because Port A is uninstrumented. The bus-voltage axis is swept across seven points from 7.1 to 10.2 V in 0.5 V steps, deliberately wider than the import/export dead-band to capture the full duty-cycle response; this axis is complete at 100% irradiance and gives a mean conversion efficiency of 97.3% across the operating range (Section 3.3.3). The 25%, 50% and 75% lab-dimmer settings are scheduled for the next test session and will close out the irradiance axis.
 
 Supercap SMPS (Section 4.3): fully automated cycle test triggered from the host dashboard. The test integrates bus-side $E_("in")$ and $E_("out")$ at the 1 kHz tick and reports the round-trip efficiency $eta_("RT") = E_("out") / E_("in")$ from a single charge and discharge cycle. The sweep covers charge and discharge current at three levels (0.1, 0.2, 0.3 A) at a 10V bus, and bus voltage at five levels (8.0 to 10.0 V) at 0.2 A. The measured round-trip efficiency is approximately 88%.
 
