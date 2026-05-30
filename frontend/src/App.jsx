@@ -353,7 +353,7 @@ function App() {
                 </p>
               </div>
 
-              <div className="insight-card tree-bg">
+              <div className="insight-card">
                 <div className="sub">Exporting power...</div>
                 <div className="val icon-green">
                   {typeof latest?.sell_price === "number"
