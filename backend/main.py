@@ -183,7 +183,7 @@ def _run_naive_from_db(grid_row, module_rows):
         cap_i_cmd = power_left / vbus if power_left > 0 else 0.0
     elif energy_cap > 0:
         led_total_power = demand
-        cap_i_cmd = -0.30
+        cap_i_cmd = -0.60
     else:
         led_total_power = pv_power
         cap_i_cmd = 0.0

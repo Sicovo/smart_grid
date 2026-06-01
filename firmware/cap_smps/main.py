@@ -9,14 +9,15 @@
 #   (no `65536 - pwm_out` inversion).
 #
 # Energy storage: 2 × 0.25 F bank in parallel (0.5 F total), 18 V rating.
-#   Datasheet 5-second peak current: 350 mA. We clamp |i_cmd| at 0.30 A.
+#   SMPS hardware current limit: 0.76 A. We clamp |i_cmd| at 0.60 A,
+#   leaving ~21% headroom under the hardware limit.
 #   Usable window 10.5 V (below this Va<Vb, SMPS can't transfer) to 17.5 V
 #   (SMPS port limit, under cap rating). ~49 J of usable energy in that window.
 #
 # Control architecture: no outer bus-voltage loop — grid/export handle bus
 # regulation. The cap is a *commanded* current source/sink. The "outer" is
 # just three safety clamps on i_cmd:
-#   1. |i_cmd| clamped to I_CAP_MAX (0.30 A).
+#   1. |i_cmd| clamped to I_CAP_MAX (0.60 A).
 #   2. Linear taper to 0 as V_cap approaches its ceiling (over 17.0 -> 17.5 V).
 #   3. Linear taper to 0 as V_cap approaches its floor   (over 11.0 -> 10.5 V).
 # The inner loop is a single PI current controller, exactly like pv_smps's
@@ -115,8 +116,8 @@ V_CAP_MIN       = 10.5    # hard floor   (Va > Vbus margin)
 V_CAP_TAPER_HI  = 17.0    # start tapering charge current here, fully zero at V_CAP_MAX
 V_CAP_TAPER_LO  = 11.0    # start tapering discharge current here, fully zero at V_CAP_MIN
 
-# Current command limit — 30% headroom under the 350 mA 5-second rating.
-I_CAP_MAX       = 0.30
+# Current command limit — ~21% headroom under the 0.76 A SMPS hardware limit.
+I_CAP_MAX       = 0.60
 
 # Inner current loop gains — same shape as pv_smps inner loop. Tune after bring-up.
 KP_I, KI_I      = 100, 200
@@ -132,7 +133,7 @@ I_ERR_INT_LIMIT = 500.0
 V_CAP_OVERVOLT  = 17.8    # belt-and-braces — taper should keep us under 17.5
 VB_CRASH        = 2.0     # bus collapsed — refuse to operate
 VB_OVERVOLT     = 13.0    # bus runaway — refuse to operate
-I_TRIP_ABS      = 0.45    # ~50% over the 0.30 A cap; catches a runaway PI fast
+I_TRIP_ABS      = 0.70    # ~17% over the 0.60 A cap, ~8% under the 0.76 A hardware limit
 
 # Bus-droop awareness — back off charging if the bus is sagging, so cap_smps
 # doesn't fight grid_smps for current and trigger a runaway. Linear taper:

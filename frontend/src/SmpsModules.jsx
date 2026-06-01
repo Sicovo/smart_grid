@@ -314,7 +314,7 @@ function CapControls({ onCmd }) {
   const apply = v => { setIcmd(v); onCmd({ i_cmd: v }); };
   return <>
     <CtrlRow label="i_cmd">
-      <input className="smps-slider" type="range" min="-0.30" max="0.30" step="0.01"
+      <input className="smps-slider" type="range" min="-0.60" max="0.60" step="0.01"
              value={icmd} onChange={e => setIcmd(parseFloat(e.target.value))} />
       <span className="smps-now">{sign}{icmd.toFixed(2)} A</span>
       <Btn onClick={() => onCmd({ i_cmd: icmd })}>Apply</Btn>
