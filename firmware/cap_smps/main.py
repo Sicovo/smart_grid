@@ -32,13 +32,16 @@
 #              i_cmd, i_cmd_eff, pwm, trip, trip_reason, enable, wd,
 #              -- cycle-test fields (meaningful while test_phase != 'idle') --
 #              test_phase, test_t_ms,
-#              test_i_charge_set, test_i_discharge_set,
+#              test_i_charge_set, test_i_discharge_set, test_hold_ms_set,
 #              test_E_in_J, test_E_out_J,
-#              test_E_cap_start_J, test_E_cap_peak_J, test_E_cap_end_J,
-#              test_eta_charge, test_eta_discharge, test_eta_roundtrip }
+#              test_E_cap_start_J, test_E_cap_peak_J,
+#              test_E_cap_after_hold_J, test_E_cap_end_J,
+#              test_eta_charge, test_eta_discharge,
+#              test_eta_self_discharge, test_eta_roundtrip }
 # Commands:  { enable, i_cmd, reset_trip,
 #              -- cycle-test (efficiency characterisation) --
-#              test_start, test_abort, test_i_charge, test_i_discharge }
+#              test_start, test_abort,
+#              test_i_charge, test_i_discharge, test_hold_s }
 #
 # Noise treatment (matches pv_smps):
 #   - 16-sample INA219 averaging
@@ -54,8 +57,12 @@
 #     are comparable across operating points.
 #
 # Cycle test: triggered by `test_start: 1`. Runs precharge -> settle ->
-# charge -> settle -> discharge -> settle between V_TEST_LO and V_TEST_HI
-# at the user-supplied charge / discharge currents (default 0.2 A each).
+# charge -> settle -> hold -> discharge -> settle between V_TEST_LO and
+# V_TEST_HI at the user-supplied charge / discharge currents (default
+# 0.2 A each). `test_hold_s` (default 0) inserts a zero-current dwell
+# between the charge-end settle and the discharge phase so leakage /
+# self-discharge can be observed; at hold=0 the phase exits on its
+# first tick and the cycle shape is identical to the no-hold case.
 # Integrates bus-side E_in over the charge phase and E_out over the
 # discharge phase at the full 1 kHz tick rate; captures cap-side
 # (1/2) C V^2 at each settle (open-circuit, ESR-free). On completion
@@ -133,7 +140,7 @@ I_ERR_INT_LIMIT = 500.0
 V_CAP_OVERVOLT  = 17.8    # belt-and-braces — taper should keep us under 17.5
 VB_CRASH        = 2.0     # bus collapsed — refuse to operate
 VB_OVERVOLT     = 13.0    # bus runaway — refuse to operate
-I_TRIP_ABS      = 0.70    # ~17% over the 0.60 A cap, ~8% under the 0.76 A hardware limit
+I_TRIP_ABS      = 0.75    # ~25% over the 0.60 A cap, just under the 0.76 A hardware limit
 
 # Bus-droop awareness — back off charging if the bus is sagging, so cap_smps
 # doesn't fight grid_smps for current and trigger a runaway. Linear taper:
@@ -159,6 +166,11 @@ TEST_PHASE_TIMEOUT_MS  = 60000     # any single phase longer than this -> abort
 TEST_I_DEFAULT         = 0.20
 TEST_I_MIN             = 0.05
 TEST_I_MAX             = I_CAP_MAX  # hard clamp = cap's own current limit
+# Hold phase: between settle2 and discharging, i_cmd=0 for this many ms so the
+# user can measure self-discharge / leakage. hold=0 -> phase exits on first
+# tick, preserving the original cycle shape exactly.
+TEST_HOLD_DEFAULT_S    = 0
+TEST_HOLD_MAX_S        = 600       # 10 min ceiling, enough for slow leakage curves
 DT_S                   = 0.001     # tick period in seconds (for energy integration)
 
 # ---------------- Shared state (dashboard-compatible) ----------------
@@ -201,48 +213,54 @@ _prev_op    = None     # (round(i_cmd, 3), int(enabled), test_phase)
 
 # ---- Cycle-test state ----
 # Phases: 'idle' -> 'precharge' -> 'settle1' -> 'charging' -> 'settle2'
-#         -> 'discharging' -> 'settle3' -> 'done' (or 'aborted' anytime).
-_test_phase           = 'idle'
-_test_phase_start     = 0      # ticks_ms at entry to current phase
-_test_t_start         = 0      # ticks_ms at start of whole test
-_test_i_charge        = TEST_I_DEFAULT
-_test_i_discharge     = TEST_I_DEFAULT
-_test_E_in            = 0.0    # bus-side energy in over the charge phase
-_test_E_out           = 0.0    # bus-side energy out over the discharge phase
-_test_E_cap_start     = 0.0    # (1/2) C V^2 captured at end of settle1
-_test_E_cap_peak      = 0.0    # (1/2) C V^2 captured at end of settle2
-_test_E_cap_end       = 0.0    # (1/2) C V^2 captured at end of settle3
-_test_eta_charge      = 0.0
-_test_eta_discharge   = 0.0
-_test_eta_roundtrip   = 0.0
-_test_settle_sum      = 0.0    # OCV averaging accumulator
-_test_settle_n        = 0
+#         -> 'hold' -> 'discharging' -> 'settle3' -> 'done' (or 'aborted' anytime).
+_test_phase             = 'idle'
+_test_phase_start       = 0      # ticks_ms at entry to current phase
+_test_t_start           = 0      # ticks_ms at start of whole test
+_test_i_charge          = TEST_I_DEFAULT
+_test_i_discharge       = TEST_I_DEFAULT
+_test_hold_ms           = 0      # duration of hold phase (0 = skip immediately)
+_test_E_in              = 0.0    # bus-side energy in over the charge phase
+_test_E_out             = 0.0    # bus-side energy out over the discharge phase
+_test_E_cap_start       = 0.0    # (1/2) C V^2 captured at end of settle1
+_test_E_cap_peak        = 0.0    # (1/2) C V^2 captured at end of settle2 (before hold)
+_test_E_cap_after_hold  = 0.0    # (1/2) C V^2 captured at end of hold (== peak when hold=0)
+_test_E_cap_end         = 0.0    # (1/2) C V^2 captured at end of settle3
+_test_eta_charge        = 0.0
+_test_eta_discharge     = 0.0
+_test_eta_self_discharge = 0.0   # E_cap_after_hold / E_cap_peak (1.0 when hold=0)
+_test_eta_roundtrip     = 0.0
+_test_settle_sum        = 0.0    # OCV averaging accumulator
+_test_settle_n          = 0
 
 def _test_reset():
     """Zero all cycle-test accumulators and results. Phase becomes 'idle'."""
     global _test_phase, _test_E_in, _test_E_out
-    global _test_E_cap_start, _test_E_cap_peak, _test_E_cap_end
-    global _test_eta_charge, _test_eta_discharge, _test_eta_roundtrip
+    global _test_E_cap_start, _test_E_cap_peak, _test_E_cap_after_hold, _test_E_cap_end
+    global _test_eta_charge, _test_eta_discharge, _test_eta_self_discharge, _test_eta_roundtrip
     global _test_settle_sum, _test_settle_n
     _test_phase = 'idle'
     _test_E_in = 0.0
     _test_E_out = 0.0
     _test_E_cap_start = 0.0
     _test_E_cap_peak = 0.0
+    _test_E_cap_after_hold = 0.0
     _test_E_cap_end = 0.0
     _test_eta_charge = 0.0
     _test_eta_discharge = 0.0
+    _test_eta_self_discharge = 0.0
     _test_eta_roundtrip = 0.0
     _test_settle_sum = 0.0
     _test_settle_n = 0
 
-def _test_begin(i_charge, i_discharge, v_cap_now):
+def _test_begin(i_charge, i_discharge, hold_s, v_cap_now):
     """Start a new cycle test. Skips precharge if Vcap already at the floor."""
     global _test_phase, _test_phase_start, _test_t_start
-    global _test_i_charge, _test_i_discharge
+    global _test_i_charge, _test_i_discharge, _test_hold_ms
     _test_reset()
     _test_i_charge    = max(TEST_I_MIN, min(TEST_I_MAX, float(i_charge)))
     _test_i_discharge = max(TEST_I_MIN, min(TEST_I_MAX, float(i_discharge)))
+    _test_hold_ms     = int(max(0.0, min(TEST_HOLD_MAX_S, float(hold_s))) * 1000)
     _test_t_start     = time.ticks_ms()
     _test_phase_start = _test_t_start
     if v_cap_now > TEST_V_LO + 0.10:
@@ -257,13 +275,18 @@ def _test_mark_aborted():
         _test_phase = 'aborted'
 
 def _test_finalize_eta():
-    """Compute and store the three efficiencies from accumulated energies."""
-    global _test_eta_charge, _test_eta_discharge, _test_eta_roundtrip
+    """Compute and store the efficiencies from accumulated energies.
+    eta_discharge uses E_cap_after_hold (not E_cap_peak) so the discharge
+    efficiency isn't contaminated by leakage. eta_self_discharge captures
+    that leakage separately. With hold=0, E_cap_after_hold == E_cap_peak
+    so eta_self_discharge = 1.0 and the other metrics are unchanged."""
+    global _test_eta_charge, _test_eta_discharge, _test_eta_self_discharge, _test_eta_roundtrip
     cap_received  = _test_E_cap_peak - _test_E_cap_start
-    cap_delivered = _test_E_cap_peak - _test_E_cap_end
-    _test_eta_charge    = (cap_received  / _test_E_in) if _test_E_in   > 1e-6 else 0.0
-    _test_eta_discharge = (_test_E_out / cap_delivered) if cap_delivered > 1e-6 else 0.0
-    _test_eta_roundtrip = (_test_E_out / _test_E_in)   if _test_E_in   > 1e-6 else 0.0
+    cap_delivered = _test_E_cap_after_hold - _test_E_cap_end
+    _test_eta_charge         = (cap_received / _test_E_in) if _test_E_in > 1e-6 else 0.0
+    _test_eta_discharge      = (_test_E_out / cap_delivered) if cap_delivered > 1e-6 else 0.0
+    _test_eta_self_discharge = (_test_E_cap_after_hold / _test_E_cap_peak) if _test_E_cap_peak > 1e-6 else 0.0
+    _test_eta_roundtrip      = (_test_E_out / _test_E_in) if _test_E_in > 1e-6 else 0.0
 
 def _reset_controllers():
     global _i_err_int, _pwm_out
@@ -397,6 +420,7 @@ try:
                 cmd['i_cmd']      = 0.0
                 _test_begin(cmd.get('test_i_charge', TEST_I_DEFAULT),
                             cmd.get('test_i_discharge', TEST_I_DEFAULT),
+                            cmd.get('test_hold_s', TEST_HOLD_DEFAULT_S),
                             _va_lp)
                 i_cmd_raw = 0.0   # apply within THIS tick too
             if cmd.get('test_abort', 0):
@@ -415,10 +439,18 @@ try:
                 now_ms_t      = time.ticks_ms()
                 phase_elapsed = time.ticks_diff(now_ms_t, _test_phase_start)
 
-                if phase_elapsed > TEST_PHASE_TIMEOUT_MS:
-                    # Defensive: a phase exceeding the timeout means
-                    # something is wrong (PSU current limit, panel blocking
-                    # discharge, etc). Abort rather than burn forever.
+                # Hold legitimately runs up to _test_hold_ms (user-controlled,
+                # up to 10 min); every other phase keeps the 60 s safety guard
+                # so a stuck precharge / charge / discharge still aborts.
+                if _test_phase == 'hold':
+                    phase_timeout = _test_hold_ms + 500   # small buffer past hold end
+                else:
+                    phase_timeout = TEST_PHASE_TIMEOUT_MS
+
+                if phase_elapsed > phase_timeout:
+                    # Defensive: a phase exceeding its timeout means something
+                    # is wrong (PSU current limit, panel blocking discharge,
+                    # etc). Abort rather than burn forever.
                     _test_mark_aborted()
                 else:
                     test_override = True
@@ -456,7 +488,21 @@ try:
                             _test_settle_n   += 1
                         if phase_elapsed >= TEST_SETTLE_MS:
                             v_ocv = (_test_settle_sum / _test_settle_n) if _test_settle_n else _va_lp
-                            _test_E_cap_peak  = 0.5 * C_BANK_F * v_ocv * v_ocv
+                            _test_E_cap_peak       = 0.5 * C_BANK_F * v_ocv * v_ocv
+                            _test_E_cap_after_hold = _test_E_cap_peak  # default if hold=0 falls through
+                            _test_phase            = 'hold'
+                            _test_phase_start      = now_ms_t
+                    elif _test_phase == 'hold':
+                        # Zero-current dwell so self-discharge / leakage can be
+                        # observed without any SMPS-driven current contaminating
+                        # the V_cap drift. The dashboard's full-rate CSV captures
+                        # the V_cap trace during this window. With _test_hold_ms=0
+                        # the condition fires on the first tick and we transition
+                        # straight to discharging -- E_cap_after_hold equals
+                        # E_cap_peak, eta_self_discharge ends up 1.0.
+                        test_i_cmd = 0.0
+                        if phase_elapsed >= _test_hold_ms:
+                            _test_E_cap_after_hold = 0.5 * C_BANK_F * _va_lp * _va_lp
                             _test_phase       = 'discharging'
                             _test_phase_start = now_ms_t
                     elif _test_phase == 'discharging':
@@ -546,16 +592,19 @@ try:
                     'test_phase':           _test_phase,
                     'test_t_ms':            (time.ticks_diff(time.ticks_ms(), _test_t_start)
                                              if _test_phase != 'idle' else 0),
-                    'test_i_charge_set':    _test_i_charge,
-                    'test_i_discharge_set': _test_i_discharge,
-                    'test_E_in_J':          _test_E_in,
-                    'test_E_out_J':         _test_E_out,
-                    'test_E_cap_start_J':   _test_E_cap_start,
-                    'test_E_cap_peak_J':    _test_E_cap_peak,
-                    'test_E_cap_end_J':     _test_E_cap_end,
-                    'test_eta_charge':      _test_eta_charge,
-                    'test_eta_discharge':   _test_eta_discharge,
-                    'test_eta_roundtrip':   _test_eta_roundtrip,
+                    'test_i_charge_set':       _test_i_charge,
+                    'test_i_discharge_set':    _test_i_discharge,
+                    'test_hold_ms_set':        _test_hold_ms,
+                    'test_E_in_J':             _test_E_in,
+                    'test_E_out_J':            _test_E_out,
+                    'test_E_cap_start_J':      _test_E_cap_start,
+                    'test_E_cap_peak_J':       _test_E_cap_peak,
+                    'test_E_cap_after_hold_J': _test_E_cap_after_hold,
+                    'test_E_cap_end_J':        _test_E_cap_end,
+                    'test_eta_charge':         _test_eta_charge,
+                    'test_eta_discharge':      _test_eta_discharge,
+                    'test_eta_self_discharge': _test_eta_self_discharge,
+                    'test_eta_roundtrip':      _test_eta_roundtrip,
                 }
 
             # ---- Safety guards ----

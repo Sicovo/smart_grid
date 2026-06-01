@@ -542,6 +542,26 @@ The per-phase split into $eta_("charge")$ and $eta_("discharge")$ is deliberatel
 
 The cap cycle test also feeds the future-work automated PV efficiency measurement (Section 3.3): because the bus-side energy delivered into the cap is directly measured, a PV run that charges the cap can be cross-checked against $E_("in")$ without relying on the cap-side split.
 
+=== Extended Current Sweep and Self-Discharge Characterisation
+
+After the firmware command clamp was raised from 0.3A to 0.6A (Section 4.2), the current sweep was extended with three runs each at 0.4A, 0.5A and 0.6A. The cycle-test state machine was then extended with a user-controlled zero-current hold phase between charge and discharge, and a hold-duration sweep at 60, 120, 180, 240 and 300 seconds (three runs each, 0.2A charge / discharge) was run to characterise self-discharge. @fig:cap-hold-eff summarises the three sweeps in a common style.
+
+#figure(
+  image("images/supercap_hold_efficiency.png", width: 100%),
+  caption: [Round-trip efficiency across the three sweeps. (a) versus charge / discharge current at 10V bus and zero hold, extending the original sweep to 0.6A. (b) versus bus voltage at 0.2A (repeated from Section 4.3, included for direct comparison with the new sweeps). (c) versus hold duration at 0.2A and 10V bus: the cost of parking the cap at high state of charge.],
+) <fig:cap-hold-eff>
+
+Panel (a) shows that $eta_("RT")$ sits in a narrow 87 to 90% band across the full 0.1 to 0.6A range, with a mild downward trend (89.7% at 0.1A to 86.9% at 0.5A) consistent with conduction loss scaling with current, and a small recovery to 87.4% at 0.6A inside the run-to-run scatter. Panel (b) is the bus-voltage sweep, with all five points within a 1.5 percentage-point band. Panel (c) is the new finding: $eta_("RT")$ falls from 88.3% with no hold to 64.1% after 300 seconds of hold at peak charge. The largest single step is the first minute (88.3% to 77.5%); subsequent minutes contribute a roughly linear 3 percentage-points-per-minute slope. Because $eta_("RT") = E_("out") / E_("in")$ is measured entirely at the bus this is real energy lost, not a measurement artefact.
+
+#figure(
+  image("images/supercap_hold_self_discharge.png", width: 100%),
+  caption: [Master self-discharge curve: median $V_("cap")$ across 13 hold runs at 0.2A. Two regimes are visible: a fast dielectric-absorption component over the first 50 seconds (shaded) followed by slow ohmic leakage. All five tested hold durations collapse onto this one curve, so a single two-time-constant model describes the bank.],
+) <fig:cap-hold>
+
+@fig:cap-hold underpins panel (c) of the efficiency figure. The median $V_("cap")$ traced across all 0.2A hold runs (irrespective of their commanded hold length) collapses onto a single relaxation curve, confirming that one underlying mechanism dominates: a fast component of approximately 0.5V over the first 50 seconds, attributable to dielectric absorption (charge redistribution into deeper dielectric layers, already flagged in Section 4.1 as the reason the cycle test inserts a settle window before each OCV capture), and a slow component of order 2 to 3mV per second thereafter, attributable to ohmic leakage through the dielectric. That all hold lengths produce the same curve means the relaxation can be fit once and reused for any hold the algorithm chooses.
+
+The implication for the economic dispatch algorithm in Section 11 is direct: the supercap should be charged just-in-time. Even a few minutes of unscheduled hold at peak state of charge materially erodes the round-trip benefit, and slight scheduling slack is cheaper to absorb on the input side (delay charging by a few minutes) than on the output side (charge ahead and let leakage bleed it down).
+
 #pagebreak()
 
 

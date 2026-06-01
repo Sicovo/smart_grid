@@ -947,6 +947,15 @@ function build() {
         <input type="number" id="cap-test-idischarge" step="0.05" min="0.05" max="0.60" value="0.20" style="width:70px">
         <span style="color:var(--dim);font-size:10px">A</span>
       </div>
+      <div class="row">
+        <label>Hold</label>
+        <input type="range" id="cap-test-hold" min="0" max="600" step="1" value="0" style="flex:1"
+               oninput="document.getElementById('cap-test-hold-v').textContent=this.value+' s'">
+        <span class="now" id="cap-test-hold-v" style="min-width:42px;text-align:right">0 s</span>
+      </div>
+      <div class="row" style="color:var(--dim);font-size:10px;line-height:1.4;padding-left:2px">
+        <span>Zero-current dwell after charge, for self-discharge / leakage observation. 0 s = original cycle.</span>
+      </div>
       <div class="quickbar">
         <button id="cap-test-start" onclick="startCycleTest()">▶ Start cycle</button>
         <button id="cap-test-abort" class="danger" onclick="abortCycleTest()" disabled>■ Abort</button>
@@ -1259,16 +1268,18 @@ const CYCLE_POLL_MS  = 200;    // 5 Hz target. The poll is NON-overlapping (see
 function startCycleTest() {
   const ic = parseFloat(document.getElementById('cap-test-icharge').value);
   const id = parseFloat(document.getElementById('cap-test-idischarge').value);
+  const hs = parseFloat(document.getElementById('cap-test-hold').value);
   if (!isFinite(ic) || ic <= 0 || !isFinite(id) || id <= 0) {
     alert('Enter valid charge / discharge currents (0.05–0.60 A).');
     return;
   }
+  const hold_s = (isFinite(hs) && hs > 0) ? hs : 0;
   _cycleSamples   = [];
   _cycleStartedAt = Date.now();
   document.getElementById('cap-test-start').disabled = true;
   document.getElementById('cap-test-abort').disabled = false;
   document.getElementById('cap-test-csv').disabled   = true;
-  send('cap', { test_start: 1, test_i_charge: ic, test_i_discharge: id });
+  send('cap', { test_start: 1, test_i_charge: ic, test_i_discharge: id, test_hold_s: hold_s });
   _cycleRunning = true;
   _cyclePollTick();
 }
@@ -1342,6 +1353,7 @@ function updateCycleStatus(d) {
   const phaseColor = (ph === 'done')    ? 'var(--ok)'
                   : (ph === 'aborted') ? 'var(--err)'
                   :                      'var(--warn)';
+  const holdSetMs = d.test_hold_ms_set || 0;
   let html =
     `<b>Phase:</b> <span style="color:${phaseColor}">${ph}</span>` +
     ` &nbsp;<b>t:</b> ${(t/1000).toFixed(1)} s` +
@@ -1352,13 +1364,31 @@ function updateCycleStatus(d) {
     ` &nbsp;<b>ΔE_cap (charge):</b> ` +
       `${f((d.test_E_cap_peak_J || 0) - (d.test_E_cap_start_J || 0), 2)} J`;
 
+  if (ph === 'hold' && holdSetMs > 0) {
+    let holdStartMs = null;
+    for (const s of _cycleSamples) {
+      if (s.phase === 'hold') { holdStartMs = s.t_ms; break; }
+    }
+    const elapsed = (holdStartMs !== null) ? (t - holdStartMs) : 0;
+    const remain  = Math.max(0, holdSetMs - elapsed);
+    html += `<br><b>Hold:</b> ${(elapsed/1000).toFixed(1)} / ${(holdSetMs/1000).toFixed(0)} s` +
+            ` &nbsp;<b>remaining:</b> ${(remain/1000).toFixed(1)} s`;
+  }
+
   if (ph === 'done') {
     const pct = (x) => f(100 * (x || 0), 1);
+    const leakJ = (d.test_E_cap_peak_J || 0) - (d.test_E_cap_after_hold_J || 0);
     html +=
       `<br><b style="color:var(--ok)">RESULTS</b> &nbsp;` +
       `η_charge = ${pct(d.test_eta_charge)} % &nbsp;` +
       `η_discharge = ${pct(d.test_eta_discharge)} % &nbsp;` +
       `<b>η_roundtrip = ${pct(d.test_eta_roundtrip)} %</b>`;
+    if (holdSetMs > 0) {
+      html +=
+        `<br><b>Self-discharge over ${(holdSetMs/1000).toFixed(0)} s:</b> ` +
+        `η_hold = ${pct(d.test_eta_self_discharge)} % &nbsp;` +
+        `ΔE_leak = ${f(leakJ, 3)} J`;
+    }
   }
   if (ph === 'aborted') {
     html +=
